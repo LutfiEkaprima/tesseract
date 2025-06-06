@@ -62,19 +62,18 @@ jobs:
             ${{ env.VCPKG_BINARY_SOURCES_WIN }}
           key: vcpkg-${{ runner.os }}-${{ hashFiles('nsis/build.sh') }}
 
-      # Langkah 4: Menjalankan vcpkg untuk Menginstal Dependensi C++
-      # Ini adalah langkah otomatisasi dari apa yang kita lakukan secara manual.
-      - name: Run vcpkg
+      # Langkah 4: Menyiapkan Lingkungan vcpkg
+      # Langkah ini hanya memastikan vcpkg ada dan siap digunakan.
+      - name: Setup vcpkg environment
         uses: lukka/run-vcpkg@v11
         with:
-          # Daftar pustaka yang dibutuhkan oleh Tesseract.
-          vcpkgArguments: 'leptonica libarchive libcurl icu'
-          # Menentukan target arsitektur: 64-bit Windows.
+          # Kita tidak lagi menjalankan instalasi di sini, hanya setup.
           vcpkgTriplet: x64-windows
-          # Menyimpan hasil vcpkg untuk digunakan oleh langkah selanjutnya.
-          runVcpkgInstall: true
-          # Menggunakan cache biner untuk lebih mempercepat proses.
-          vcpkgBinaryCache: true
+
+      # Langkah 4.1: Instal Dependensi Secara Manual
+      # Kita menjalankan perintah instalasi secara eksplisit untuk menghindari masalah dengan action.
+      - name: Install dependencies manually via vcpkg
+        run: vcpkg install leptonica libarchive libcurl icu --triplet x64-windows
 
       # Langkah 5: Mengkonfigurasi Proyek dengan CMake
       # Menghasilkan file build (misalnya untuk Visual Studio atau Ninja) dari kode sumber.
