@@ -1,100 +1,98 @@
-name: vcpkg
-# build and test of tesseract on windows using vcpkg and cmake.
-# vcpkg with -head does not work. https://github.com/microsoft/vcpkg/issues/16019
-on:
-  #push:
-  schedule:
-    - cron: 0 23 * * *
+# Nama alur kerja (workflow) yang akan ditampilkan di tab "Actions" pada repositori GitHub Anda.
+name: Installer for Windows
 
+# Pemicu (Triggers): Mendefinisikan kapan alur kerja ini akan dijalankan secara otomatis.
+on:
+  # Akan berjalan setiap kali ada kode yang di-push (diunggah) ke cabang 'main'.
+  push:
+    branches: [main]
+  # Akan berjalan setiap kali ada Pull Request yang dibuat atau diperbarui yang menargetkan cabang 'main'.
+  pull_request:
+    branches: [main]
+
+  # 'workflow_dispatch' memungkinkan Anda untuk menjalankan alur kerja ini secara manual
+  # dari halaman "Actions" di GitHub, dengan mengklik tombol "Run workflow".
+  workflow_dispatch:
+
+# Jobs: Daftar pekerjaan (tasks) yang akan dieksekusi dalam alur kerja ini.
 jobs:
   build:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [windows-latest]
+    # 'runs-on' menentukan jenis mesin virtual yang akan digunakan untuk menjalankan pekerjaan ini.
+    # 'windows-latest' menjamin lingkungan build yang bersih setiap saat.
+    runs-on: windows-latest
 
+    # Steps: Rangkaian langkah-langkah sekuensial yang akan dieksekusi oleh pekerjaan "build".
     steps:
-      - name: Checkout Tesseract Source (--head from main branch)
+      # Langkah 1: Checkout Kode Sumber
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          # Mengunduh semua submodule seperti Leptonica.
+          submodules: 'recursive'
 
-      - name: Visual Studio Setup
-        shell: cmd
-        run: |
-             call "C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+      # Langkah 2: Menyiapkan Lingkungan MSYS2
+      # Diperlukan untuk dapat menjalankan skrip shell (.sh) di lingkungan Windows.
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            make
+            unzip
+            wget
+            p7zip
 
-      - name: Install vcpkg
+      # Langkah 3: Mengunduh dan Menyiapkan vcpkg Secara Manual
+      # Kita tidak lagi menggunakan action lukka/run-vcpkg untuk menghindari masalah kompatibilitas.
+      - name: Clone and Bootstrap vcpkg
         run: |
-             git clone https://github.com/microsoft/vcpkg
-             vcpkg/bootstrap-vcpkg.bat
-             vcpkg/vcpkg integrate install
+          git clone https://github.com/microsoft/vcpkg.git D:/a/vcpkg
+          D:/a/vcpkg/bootstrap-vcpkg.bat
 
-      - name: Build and Install Leptonica and image libraries using vcpkg
-        run: |
-             vcpkg/vcpkg install leptonica:x64-windows
+      # Langkah 4: Menambahkan vcpkg ke PATH
+      # Ini membuat perintah 'vcpkg' bisa dijalankan langsung di langkah-langkah berikutnya.
+      - name: Add vcpkg to PATH
+        run: echo "D:\a\vcpkg" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        shell: pwsh
 
-      - name: Configure and Build Tesseract (--head from main branch) with cmake
-        run: |
-             cmake . -B build -DCMAKE_BUILD_TYPE=Release -DSW_BUILD=OFF -DOPENMP_BUILD=OFF -DBUILD_TRAINING_TOOLS=OFF "-DCMAKE_TOOLCHAIN_FILE=${env:GITHUB_WORKSPACE}/vcpkg/scripts/buildsystems/vcpkg.cmake"
-             cmake --build build --config Release --target install
+      # Langkah 5: Instal Dependensi Menggunakan vcpkg
+      # Menjalankan perintah instalasi secara eksplisit.
+      - name: Install dependencies via vcpkg
+        run: vcpkg install leptonica libarchive libcurl icu --triplet x64-windows
 
-      - name: Display Tesseract Version
-        run: |
-             D:\a\tesseract\tesseract\build\bin\Release\tesseract.exe --version
+      # Langkah 6: Mengkonfigurasi Proyek dengan CMake
+      # Menghasilkan file build dari kode sumber.
+      - name: Configure CMake
+        run: >
+          cmake -G Ninja -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=D:/a/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DBUILD_TRAINING_TOOLS=ON
 
-      - name: Create CMakeLists.txt file for basicapitest
-        shell: bash
-        run: |
-             cd test
-             cat << "EOF" > CMakeLists.txt
-             cmake_minimum_required(VERSION 3.19)
-             project( basicapitest )
-             find_package( Tesseract REQUIRED )
-             find_package( Leptonica REQUIRED )
-             include_directories(${Tesseract_INCLUDE_DIRS})
-             include_directories(${Leptonica_INCLUDE_DIRS})
-             add_executable( basicapitest testing/basicapitest.cpp )
-             target_link_libraries(basicapitest ${Leptonica_LIBRARIES})
-             target_link_libraries(basicapitest Tesseract::libtesseract)
-             add_library(libtesseract UNKNOWN IMPORTED)
-             set_property(TARGET libtesseract PROPERTY IMPORTED_LOCATION D:/a/tesseract/tesseract/build/Release/tesseract50.lib)
-             target_link_libraries(basicapitest Tesseract::libtesseract)
-             EOF
-             cat CMakeLists.txt
+      # Langkah 7: Mengkompilasi Kode dan Menjalankan Instalasi
+      # 'cmake --build' akan memanggil kompiler untuk membangun proyek.
+      # '--target install' akan menyalin semua hasil ke direktori instalasi.
+      - name: Build
+        run: cmake --build build --config Release --target install
 
-      - name: Configure basicapitest
-        run: |
-             cd test
-             cmake . "-DCMAKE_TOOLCHAIN_FILE=${env:GITHUB_WORKSPACE}/vcpkg/scripts/buildsystems/vcpkg.cmake"
+      # Langkah 8: Menginstal NSIS (Alat Pembuat Installer)
+      - name: Install NSIS
+        run: choco install nsis -y
 
-      - name: Build basicapitest
-        run: |
-             cd test
-             cmake --build .  --config Release
+      # Langkah 9: Menjalankan Skrip untuk Membuat Installer .exe
+      - name: Build installer
+        shell: msys2 {0}
+        # Menjalankan skrip 'nsis/build.sh' yang akan mengemas semuanya menjadi satu file setup.
+        run: bash nsis/build.sh
 
-      - name: Download tessdata and image files used for tests
-        run: |
-             git clone https://github.com/egorpugin/tessdata tessdata_unittest
-             mv tessdata_unittest/* ../
-
-      - name: Run basicapitest
-        run: |
-             cd test
-             D:\a\tesseract\tesseract\test\Release\basicapitest.exe
-
-      - name: Run Tesseract CLI on test images in different languages
-        run: |
-             D:\a\tesseract\tesseract\build\bin\Release\tesseract.exe  test\testing\phototest.tif - --oem 1  --tessdata-dir ..\tessdata
-             D:\a\tesseract\tesseract\build\bin\Release\tesseract.exe  test\testing\raaj.tif - -l hin --oem 1   --tessdata-dir ..\tessdata
-             D:\a\tesseract\tesseract\build\bin\Release\tesseract.exe  test\testing\viet.tif - -l vie --oem 1   --tessdata-dir ..\tessdata
-             D:\a\tesseract\tesseract\build\bin\Release\tesseract.exe  test\testing\hebrew.png - -l heb --oem 1   --tessdata-dir ..\tessdata
-             D:\a\tesseract\tesseract\build\bin\Release\tesseract.exe  test\testing\eurotext.tif - -l fra --oem 1 --tessdata-dir ..\tessdata_best
-             D:\a\tesseract\tesseract\build\bin\Release\tesseract.exe  test\testing\arabic.tif - -l ara --oem 1 --psm 6  --tessdata-dir ..\tessdata
-
-      - name: List languages in different test tessdata-dir
-        run: |
-             D:\a\tesseract\tesseract\build\bin\Release\tesseract.exe  --list-langs --tessdata-dir ..\tessdata
-             D:\a\tesseract\tesseract\build\bin\Release\tesseract.exe  --list-langs --tessdata-dir ..\tessdata_best
-             D:\a\tesseract\tesseract\build\bin\Release\tesseract.exe  --list-langs --tessdata-dir ..\tessdata_fast
+      # Langkah 10: Mengunggah Installer sebagai "Artifact"
+      # 'upload-artifact' adalah action siap pakai untuk menyimpan file hasil build.
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          # Nama artifact yang akan ditampilkan di halaman ringkasan build.
+          name: tesseract-ocr-installer-windows
+          # Path ke file yang akan diunggah. Tanda '*' adalah wildcard.
+          path: nsis/tesseract-ocr-*.exe
