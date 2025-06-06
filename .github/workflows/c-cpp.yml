@@ -1,0 +1,114 @@
+# Nama alur kerja (workflow) yang akan ditampilkan di tab "Actions" pada repositori GitHub Anda.
+name: Installer for Windows
+
+# Pemicu (Triggers): Mendefinisikan kapan alur kerja ini akan dijalankan secara otomatis.
+on:
+  # Akan berjalan setiap kali ada kode yang di-push (diunggah) ke cabang 'main'.
+  push:
+    branches: [main]
+  # Akan berjalan setiap kali ada Pull Request yang dibuat atau diperbarui yang menargetkan cabang 'main'.
+  pull_request:
+    branches: [main]
+
+  # 'workflow_dispatch' memungkinkan Anda untuk menjalankan alur kerja ini secara manual
+  # dari halaman "Actions" di GitHub, dengan mengklik tombol "Run workflow".
+  workflow_dispatch:
+
+# Jobs: Daftar pekerjaan (tasks) yang akan dieksekusi dalam alur kerja ini.
+# Untuk kasus ini, kita hanya memiliki satu pekerjaan utama yang bernama "build".
+jobs:
+  build:
+    # 'runs-on' menentukan jenis mesin virtual yang akan digunakan untuk menjalankan pekerjaan ini.
+    # 'windows-latest' berarti GitHub akan menyediakan mesin virtual baru dengan
+    # versi Windows Server terbaru yang tersedia. Ini menjamin lingkungan build yang bersih setiap saat.
+    runs-on: windows-latest
+
+    # Steps: Rangkaian langkah-langkah sekuensial yang akan dieksekusi oleh pekerjaan "build".
+    steps:
+      # Langkah 1: Checkout Kode Sumber
+      # Menggunakan 'action' siap pakai dari GitHub untuk mengunduh kode dari repositori.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Opsi ini sangat penting. Sama dengan menjalankan 'git submodule update --init --recursive'.
+          # Ini memastikan semua dependensi eksternal (seperti Leptonica) ikut terunduh.
+          submodules: 'recursive'
+
+      # Langkah 2: Menyiapkan Lingkungan MSYS2
+      # Diperlukan untuk dapat menjalankan skrip shell (.sh) di lingkungan Windows,
+      # karena skrip pembuat installer (nsis/build.sh) ditulis dalam format tersebut.
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            make
+            unzip
+            wget
+            p7zip
+
+      # Langkah 3: Menggunakan Cache untuk Mempercepat vcpkg
+      # Menyimpan hasil instalasi vcpkg dari proses sebelumnya agar tidak perlu
+      # mengunduh dan mengkompilasi ulang semuanya setiap kali, sehingga menghemat waktu.
+      - name: Restore vcpkg and its artifacts from cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.VCPKG_ROOT }}
+            ${{ env.VCPKG_ROOT_WIN }}
+            ${{ runner.tool_cache }}/vcpkg_root
+            ${{ env.VCPKG_BINARY_SOURCES_WIN }}
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('nsis/build.sh') }}
+
+      # Langkah 4: Menjalankan vcpkg untuk Menginstal Dependensi C++
+      # Ini adalah langkah otomatisasi dari apa yang kita lakukan secara manual.
+      - name: Run vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          # Daftar pustaka yang dibutuhkan oleh Tesseract.
+          vcpkgArguments: 'leptonica libarchive libcurl icu'
+          # Menentukan target arsitektur: 64-bit Windows.
+          vcpkgTriplet: x64-windows
+          # Menyimpan hasil vcpkg untuk digunakan oleh langkah selanjutnya.
+          runVcpkgInstall: true
+          # Menggunakan cache biner untuk lebih mempercepat proses.
+          vcpkgBinaryCache: true
+
+      # Langkah 5: Mengkonfigurasi Proyek dengan CMake
+      # Menghasilkan file build (misalnya untuk Visual Studio atau Ninja) dari kode sumber.
+      - name: Configure CMake
+        run: >
+          cmake -G Ninja -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake
+          -DLeptonica_DIR=${{ env.VCPKG_ROOT }}/installed/x64-windows/share/leptonica
+          -DBUILD_TRAINING_TOOLS=ON
+
+      # Langkah 6: Mengkompilasi Kode dan Menjalankan Instalasi
+      # 'cmake --build' akan memanggil kompiler untuk membangun proyek.
+      # '--target install' akan menyalin semua hasil (.exe, .dll, tessdata) ke direktori instalasi.
+      - name: Build
+        run: cmake --build build --config Release --target install
+
+      # Langkah 7: Menginstal NSIS (Alat Pembuat Installer)
+      # Menggunakan Chocolatey (manajer paket untuk Windows) untuk menginstal NSIS dengan cepat.
+      - name: Install NSIS
+        run: choco install nsis
+
+      # Langkah 8: Menjalankan Skrip untuk Membuat Installer .exe
+      - name: Build installer
+        shell: msys2 {0}
+        # Menjalankan skrip 'nsis/build.sh' yang akan mengemas semuanya menjadi satu file setup.
+        run: bash nsis/build.sh
+
+      # Langkah 9: Mengunggah Installer sebagai "Artifact"
+      # 'upload-artifact' adalah action siap pakai untuk menyimpan file hasil build.
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          # Nama artifact yang akan ditampilkan di halaman ringkasan build.
+          name: tesseract-ocr-installer-windows
+          # Path ke file yang akan diunggah. Tanda '*' adalah wildcard.
+          path: nsis/tesseract-ocr-*.exe
