@@ -171,38 +171,137 @@ jobs:
           if (Test-Path "build/install/bin") {
             Copy-Item -Recurse "build/install/bin/*" "nsis/installer/"
           }
+          if (Test-Path "build/install/share") {
+            Copy-Item -Recurse "build/install/share" "nsis/installer/"
+          }
           
-          # Create a simple NSIS script if it doesn't exist
-          if (!(Test-Path "nsis/tesseract.nsi")) {
+          # Create LICENSE file if it doesn't exist
+          if (!(Test-Path "nsis/LICENSE")) {
             @"
+          Apache License
+          Version 2.0, January 2004
+          http://www.apache.org/licenses/
+          
+          TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+          
+          This software is provided 'as-is', without any express or implied warranty.
+          In no event will the authors be held liable for any damages arising from the use of this software.
+          "@ | Out-File -FilePath "nsis/LICENSE" -Encoding UTF8
+          }
+          
+          # Create a simple NSIS script
+          @"
           !define PRODUCT_NAME "Tesseract OCR"
           !define PRODUCT_VERSION "5.5.1"
           !define PRODUCT_PUBLISHER "Tesseract OCR Team"
           !define PRODUCT_WEB_SITE "https://github.com/tesseract-ocr/tesseract"
+          !define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\tesseract.exe"
+          !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\`${PRODUCT_NAME}"
+          !define PRODUCT_UNINST_ROOT_KEY "HKLM"
           
-          SetCompressor lzma
+          ; Modern UI
+          !include "MUI2.nsh"
           
+          ; General
           Name "`${PRODUCT_NAME} `${PRODUCT_VERSION}"
           OutFile "tesseract-ocr-`${PRODUCT_VERSION}-setup.exe"
           InstallDir "`$PROGRAMFILES64\Tesseract-OCR"
+          InstallDirRegKey HKLM "`${PRODUCT_DIR_REGKEY}" ""
+          ShowInstDetails show
+          ShowUnInstDetails show
+          SetCompressor lzma
+          
+          ; Interface Settings
+          !define MUI_ABORTWARNING
+          !define MUI_ICON "`${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
+          !define MUI_UNICON "`${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
+          
+          ; Pages
+          !insertmacro MUI_PAGE_WELCOME
+          !insertmacro MUI_PAGE_LICENSE "LICENSE"
+          !insertmacro MUI_PAGE_DIRECTORY
+          !insertmacro MUI_PAGE_INSTFILES
+          !insertmacro MUI_PAGE_FINISH
+          
+          ; Uninstaller pages
+          !insertmacro MUI_UNPAGE_INSTFILES
+          
+          ; Language files
+          !insertmacro MUI_LANGUAGE "English"
+          
+          ; Reserve files
+          !insertmacro MUI_RESERVEFILE_INSTALLOPTIONS
           
           Section "MainSection" SEC01
             SetOutPath "`$INSTDIR"
-            File /r "installer\*"
-            WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\TesseractOCR" "DisplayName" "`${PRODUCT_NAME}"
-            WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\TesseractOCR" "UninstallString" "`$INSTDIR\uninstall.exe"
-            WriteUninstaller "`$INSTDIR\uninstall.exe"
+            SetOverwrite ifnewer
+            
+            ; Copy files
+            File /r /x "*.pdb" "installer\*"
+            
+            ; Create uninstaller
+            WriteUninstaller "`$INSTDIR\uninst.exe"
+            
+            ; Registry entries
+            WriteRegStr HKLM "`${PRODUCT_DIR_REGKEY}" "" "`$INSTDIR\tesseract.exe"
+            WriteRegStr `${PRODUCT_UNINST_ROOT_KEY} "`${PRODUCT_UNINST_KEY}" "DisplayName" "`$(^Name)"
+            WriteRegStr `${PRODUCT_UNINST_ROOT_KEY} "`${PRODUCT_UNINST_KEY}" "UninstallString" "`$INSTDIR\uninst.exe"
+            WriteRegStr `${PRODUCT_UNINST_ROOT_KEY} "`${PRODUCT_UNINST_KEY}" "DisplayIcon" "`$INSTDIR\tesseract.exe"
+            WriteRegStr `${PRODUCT_UNINST_ROOT_KEY} "`${PRODUCT_UNINST_KEY}" "DisplayVersion" "`${PRODUCT_VERSION}"
+            WriteRegStr `${PRODUCT_UNINST_ROOT_KEY} "`${PRODUCT_UNINST_KEY}" "URLInfoAbout" "`${PRODUCT_WEB_SITE}"
+            WriteRegStr `${PRODUCT_UNINST_ROOT_KEY} "`${PRODUCT_UNINST_KEY}" "Publisher" "`${PRODUCT_PUBLISHER}"
+            
+            ; Add to PATH
+            EnVar::SetHKLM
+            EnVar::AddValue "PATH" "`$INSTDIR"
           SectionEnd
           
-          Section "Uninstall"
-            Delete "`$INSTDIR\*.*"
-            RMDir /r "`$INSTDIR"
-            DeleteRegKey HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\TesseractOCR"
+          Function un.onUninstSuccess
+            HideWindow
+            MessageBox MB_ICONINFORMATION|MB_OK "`$(^Name) was successfully removed from your computer."
+          FunctionEnd
+          
+          Function un.onInit
+            MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "Are you sure you want to completely remove `$(^Name) and all of its components?" IDYES +2
+            Abort
+          FunctionEnd
+          
+          Section Uninstall
+            ; Remove from PATH
+            EnVar::SetHKLM
+            EnVar::DeleteValue "PATH" "`$INSTDIR"
+            
+            ; Remove files and directories
+            RMDir /r "`$INSTDIR\*.*"
+            RMDir "`$INSTDIR"
+            
+            ; Remove registry entries
+            DeleteRegKey `${PRODUCT_UNINST_ROOT_KEY} "`${PRODUCT_UNINST_KEY}"
+            DeleteRegKey HKLM "`${PRODUCT_DIR_REGKEY}"
+            
+            SetAutoClose true
           SectionEnd
           "@ | Out-File -FilePath "nsis/tesseract.nsi" -Encoding UTF8
+
+      # Langkah 15: Install NSIS plugins
+      - name: Install NSIS EnVar plugin
+        shell: pwsh
+        run: |
+          # Download and install EnVar plugin for PATH management
+          try {
+            $pluginUrl = "https://nsis.sourceforge.io/mediawiki/images/7/7f/EnVar_plugin.zip"
+            Invoke-WebRequest -Uri $pluginUrl -OutFile "envar.zip" -ErrorAction SilentlyContinue
+            if (Test-Path "envar.zip") {
+              Expand-Archive "envar.zip" -DestinationPath "envar_temp"
+              Copy-Item "envar_temp/Plugins/x86-unicode/EnVar.dll" "C:/Program Files (x86)/NSIS/Plugins/x86-unicode/" -Force -ErrorAction SilentlyContinue
+              Copy-Item "envar_temp/Plugins/x86-ansi/EnVar.dll" "C:/Program Files (x86)/NSIS/Plugins/x86-ansi/" -Force -ErrorAction SilentlyContinue
+              Remove-Item "envar.zip", "envar_temp" -Recurse -Force -ErrorAction SilentlyContinue
+            }
+          } catch {
+            Write-Host "EnVar plugin installation failed, will create simple installer without PATH modification"
           }
 
-      # Langkah 15: Build NSIS installer
+      # Langkah 16: Build NSIS installer
       - name: Build NSIS installer
         run: |
           cd nsis
