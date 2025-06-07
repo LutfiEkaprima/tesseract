@@ -156,13 +156,14 @@ jobs:
           }
           
           # Create version info file
-          $versionInfo = @"
-Tesseract OCR - Windows x64 Build
-Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
-Built from commit: $env:GITHUB_SHA
-Repository: $env:GITHUB_REPOSITORY
-Workflow: $env:GITHUB_WORKFLOW
-"@
+          $versionInfo = @'
+          Tesseract OCR - Windows x64 Build
+          Build Date: {0}
+          Built from commit: {1}
+          Repository: {2}
+          Workflow: {3}
+          '@ -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $env:GITHUB_SHA, $env:GITHUB_REPOSITORY, $env:GITHUB_WORKFLOW
+          
           $versionInfo | Out-File -FilePath "$stagingDir/BUILD_INFO.txt" -Encoding UTF8
           
           # Show contents of staging directory
