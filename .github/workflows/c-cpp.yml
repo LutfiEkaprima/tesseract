@@ -244,80 +244,92 @@ jobs:
             Write-Warning "vcpkg bin path not found: $vcpkgBinPath"
           }
 
-          # Copy tessdata directory
-          Write-Host "`nSearching for tessdata directory..."
-          $tessdataPaths = @(
-            "build/install/share/tessdata",
-            "build/install/share/tesseract/tessdata",
-            "build/share/tessdata", 
-            "build/share/tesseract/tessdata",
-            "C:/vcpkg/installed/x64-windows/share/tesseract/tessdata",
-            "tessdata"
-          )
-
-          $tessdataFound = $false
-          foreach ($tessdataPath in $tessdataPaths) {
-            Write-Host "Checking tessdata path: $tessdataPath"
-            if (Test-Path $tessdataPath) {
-              Write-Host "Found tessdata at: $tessdataPath"
-              $tessdataFiles = Get-ChildItem -Path $tessdataPath -File -Filter "*.traineddata"
-              Write-Host "Found $($tessdataFiles.Count) traineddata files"
-              
-              if ($tessdataFiles.Count -gt 0) {
-                $destTessdataPath = Join-Path $stagingDir "tessdata"
-                New-Item -ItemType Directory -Force -Path $destTessdataPath
-                Copy-Item -Path "$tessdataPath/*" -Destination $destTessdataPath -Recurse -Force
-                Write-Host "Successfully copied tessdata directory with $($tessdataFiles.Count) language files"
-                $tessdataFound = $true
-                break
-              }
-            }
-          }
-
-          if (-not $tessdataFound) {
-            Write-Warning "tessdata directory not found. Downloading basic English language data..."
-            # Download minimal English tessdata
-            $destTessdataPath = Join-Path $stagingDir "tessdata"
-            New-Item -ItemType Directory -Force -Path $destTessdataPath
-            
-            try {
-              $engUrl = "https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata"
-              $engPath = Join-Path $destTessdataPath "eng.traineddata"
-              Invoke-WebRequest -Uri $engUrl -OutFile $engPath
-              Write-Host "Downloaded eng.traineddata successfully"
-              $tessdataFound = $true
-            } catch {
-              Write-Warning "Failed to download tessdata: $($_.Exception.Message)"
-            }
-          }
-
-          # Copy other share directory contents if they exist
-          Write-Host "`nChecking for other share directory contents..."
+          # Copy ENTIRE share directory and all its contents
+          Write-Host "`nSearching for share directory..."
           $sharePaths = @(
             "build/install/share",
             "build/share", 
-            "C:/vcpkg/installed/x64-windows/share/tesseract"
+            "C:/vcpkg/installed/x64-windows/share"
           )
-          
+
+          $shareFound = $false
           foreach ($sharePath in $sharePaths) {
+            Write-Host "Checking share path: $sharePath"
             if (Test-Path $sharePath) {
               Write-Host "Found share directory at: $sharePath"
-              $shareItems = Get-ChildItem -Path $sharePath -Directory | Where-Object { $_.Name -ne "tessdata" }
-              foreach ($item in $shareItems) {
-                $destPath = Join-Path $stagingDir $item.Name
-                Copy-Item -Path $item.FullName -Destination $destPath -Recurse -Force
-                Write-Host "Copied share item: $($item.Name)"
+              
+              # Get all contents in share directory
+              $shareContents = Get-ChildItem -Path $sharePath -Recurse
+              Write-Host "Share directory contains $($shareContents.Count) items total"
+              
+              # List what we found
+              $directories = $shareContents | Where-Object { $_.PSIsContainer }
+              $files = $shareContents | Where-Object { -not $_.PSIsContainer }
+              Write-Host "  - $($directories.Count) directories"
+              Write-Host "  - $($files.Count) files"
+              
+              if ($directories.Count -gt 0) {
+                Write-Host "Directories found:"
+                $directories | ForEach-Object { Write-Host "    $($_.FullName)" }
               }
+              
+              # Create share directory in staging
+              $destSharePath = Join-Path $stagingDir "share"
+              New-Item -ItemType Directory -Force -Path $destSharePath
+              
+              # Copy ALL contents of share directory recursively
+              Copy-Item -Path "$sharePath/*" -Destination $destSharePath -Recurse -Force
+              Write-Host "Successfully copied ENTIRE share directory to staging"
+              
+              # Verify what was copied
+              $copiedItems = Get-ChildItem -Path $destSharePath -Recurse
+              Write-Host "Copied $($copiedItems.Count) items to share directory"
+              
+              $shareFound = $true
               break
+            } else {
+              Write-Host "Share path does not exist: $sharePath"
             }
           }
-          
-          # Copy root level additional files if they exist (only files)
-          $additionalFiles = @("README.md", "LICENSE", "CHANGELOG.md")
-          foreach ($file in $additionalFiles) {
-            if (Test-Path $file) {
-              Copy-Item $file (Join-Path $stagingDir (Split-Path $file -Leaf)) -Force
-              Write-Host "Copied $file to staging directory"
+
+          if (-not $shareFound) {
+            Write-Warning "No share directory found in any expected location!"
+            Write-Host "Searching for share directory anywhere in build output..."
+            
+            # Search for any share directory in the entire build output
+            $allShareDirs = Get-ChildItem -Path "build" -Name "share" -Directory -Recurse -ErrorAction SilentlyContinue
+            if ($allShareDirs.Count -gt 0) {
+              Write-Host "Found share directories in build:"
+              $allShareDirs | ForEach-Object { 
+                $fullPath = Join-Path "build" $_
+                Write-Host "  $fullPath"
+                
+                # Use the first one found
+                if (-not $shareFound) {
+                  Write-Host "Using share directory: $fullPath"
+                  $destSharePath = Join-Path $stagingDir "share"
+                  New-Item -ItemType Directory -Force -Path $destSharePath
+                  Copy-Item -Path "$fullPath/*" -Destination $destSharePath -Recurse -Force
+                  Write-Host "Copied share directory contents"
+                  $shareFound = $true
+                }
+              }
+            }
+            
+            # If still not found, try to download minimal tessdata
+            if (-not $shareFound) {
+              Write-Warning "No share directory found anywhere. Creating minimal tessdata..."
+              $destTessdataPath = Join-Path $stagingDir "share/tessdata"
+              New-Item -ItemType Directory -Force -Path $destTessdataPath
+              
+              try {
+                $engUrl = "https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata"
+                $engPath = Join-Path $destTessdataPath "eng.traineddata"
+                Invoke-WebRequest -Uri $engUrl -OutFile $engPath
+                Write-Host "Downloaded eng.traineddata as fallback"
+              } catch {
+                Write-Warning "Failed to download tessdata: $($_.Exception.Message)"
+              }
             }
           }
           
