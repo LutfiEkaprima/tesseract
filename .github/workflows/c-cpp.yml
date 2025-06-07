@@ -178,6 +178,47 @@ jobs:
           Write-Host "Copying files from $buildOutput to $stagingDir"
           Copy-Item -Path "$buildOutput/*" -Destination $stagingDir -Recurse -Force
           
+          # Copy vcpkg DLL dependencies
+          Write-Host "Copying vcpkg DLL dependencies..."
+          $vcpkgBinPaths = @(
+            "C:/vcpkg/installed/x64-windows/bin",
+            "C:/vcpkg/installed/x64-windows/debug/bin"
+          )
+          
+          foreach ($vcpkgBinPath in $vcpkgBinPaths) {
+            if (Test-Path $vcpkgBinPath) {
+              Write-Host "Checking vcpkg bin path: $vcpkgBinPath"
+              $vcpkgDlls = Get-ChildItem -Path $vcpkgBinPath -Filter "*.dll"
+              
+              # Copy important DLLs (leptonica, libarchive, and other dependencies)
+              $importantDlls = @(
+                "lept*.dll",
+                "libarchive*.dll", 
+                "libbz2*.dll",
+                "liblzma*.dll",
+                "libzstd*.dll",
+                "zlib*.dll",
+                "libpng*.dll",
+                "jpeg*.dll",
+                "tiff*.dll",
+                "gif*.dll",
+                "webp*.dll",
+                "openjp2*.dll"
+              )
+              
+              foreach ($pattern in $importantDlls) {
+                $matchingDlls = Get-ChildItem -Path $vcpkgBinPath -Filter $pattern -ErrorAction SilentlyContinue
+                foreach ($dll in $matchingDlls) {
+                  $destPath = Join-Path $stagingDir $dll.Name
+                  if (-not (Test-Path $destPath)) {
+                    Copy-Item $dll.FullName $destPath -Force
+                    Write-Host "Copied: $($dll.Name)"
+                  }
+                }
+              }
+            }
+          }
+          
           # Also copy any additional directories that might be needed
           $additionalDirs = @("share", "tessdata")
           foreach ($dir in $additionalDirs) {
@@ -186,6 +227,17 @@ jobs:
               $destPath = Join-Path $stagingDir $dir
               Copy-Item -Path $sourcePath -Destination $destPath -Recurse -Force
               Write-Host "Copied $dir directory to staging"
+            }
+          }
+          
+          # Check for tessdata in vcpkg
+          $vcpkgSharePath = "C:/vcpkg/installed/x64-windows/share"
+          if (Test-Path $vcpkgSharePath) {
+            $tessdataPath = Join-Path $vcpkgSharePath "tessdata"
+            if (Test-Path $tessdataPath) {
+              $destTessdata = Join-Path $stagingDir "tessdata"
+              Copy-Item -Path $tessdataPath -Destination $destTessdata -Recurse -Force
+              Write-Host "Copied tessdata from vcpkg share"
             }
           }
           
@@ -207,8 +259,14 @@ jobs:
           
           $versionInfo | Out-File -FilePath "$stagingDir/BUILD_INFO.txt" -Encoding UTF8
           
+          # List all DLL files that will be included
+          Write-Host "DLL files included in the package:"
+          Get-ChildItem -Path $stagingDir -Filter "*.dll" | ForEach-Object {
+            Write-Host "  $($_.Name) - $([math]::Round($_.Length / 1KB, 2)) KB"
+          }
+          
           # Show contents of staging directory
-          Write-Host "Contents of staging directory:"
+          Write-Host "Complete contents of staging directory:"
           Get-ChildItem -Recurse $stagingDir | Select-Object FullName, Length
           
           # Create ZIP file from staging directory contents (not the directory itself)
