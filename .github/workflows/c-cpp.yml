@@ -3,15 +3,10 @@ name: Installer for Windows
 
 # Pemicu (Triggers): Mendefinisikan kapan alur kerja ini akan dijalankan secara otomatis.
 on:
-  # Akan berjalan setiap kali ada kode yang di-push (diunggah) ke cabang 'main'.
   push:
     branches: [main]
-  # Akan berjalan setiap kali ada Pull Request yang dibuat atau diperbarui yang menargetkan cabang 'main'.
   pull_request:
     branches: [main]
-
-  # 'workflow_dispatch' memungkinkan Anda untuk menjalankan alur kerja ini secara manual
-  # dari halaman "Actions" di GitHub, dengan mengklik tombol "Run workflow".
   workflow_dispatch:
 
 # Jobs: Daftar pekerjaan (tasks) yang akan dieksekusi dalam alur kerja ini.
@@ -31,7 +26,6 @@ jobs:
           submodules: 'recursive'
 
       # Langkah 2: Menyiapkan Lingkungan MSYS2
-      # Diperlukan untuk dapat menjalankan skrip shell (.sh) di lingkungan Windows.
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
         with:
@@ -45,7 +39,6 @@ jobs:
             p7zip
 
       # Langkah 3: Mengunduh dan Menyiapkan vcpkg Secara Manual
-      # Kita tidak lagi menggunakan action lukka/run-vcpkg untuk menghindari masalah kompatibilitas.
       - name: Clone and Bootstrap vcpkg
         run: |
           git clone https://github.com/microsoft/vcpkg.git D:/a/vcpkg
@@ -53,18 +46,20 @@ jobs:
         shell: cmd
 
       # Langkah 4: Menambahkan vcpkg ke PATH
-      # Ini membuat perintah 'vcpkg' bisa dijalankan langsung di langkah-langkah berikutnya.
       - name: Add vcpkg to PATH
         run: echo "D:\a\vcpkg" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         shell: pwsh
 
-      # Langkah 5: Instal Dependensi Menggunakan vcpkg
-      # Menjalankan perintah instalasi secara eksplisit.
-      - name: Install dependencies via vcpkg
-        run: vcpkg install leptonica libarchive libcurl icu --triplet x64-windows
+      # Langkah 5: Memperbarui Registri vcpkg dan Instal Dependensi
+      - name: Update vcpkg registry and Install dependencies
+        run: |
+          echo "Updating vcpkg ports..."
+          vcpkg update --no-dry-run
+          echo "Installing dependencies..."
+          vcpkg install leptonica libarchive libcurl icu --triplet x64-windows
+        shell: cmd
 
       # Langkah 6: Mengkonfigurasi Proyek dengan CMake
-      # Menghasilkan file build dari kode sumber.
       - name: Configure CMake
         run: >
           cmake -G Ninja -S . -B build
@@ -73,8 +68,6 @@ jobs:
           -DBUILD_TRAINING_TOOLS=ON
 
       # Langkah 7: Mengkompilasi Kode dan Menjalankan Instalasi
-      # 'cmake --build' akan memanggil kompiler untuk membangun proyek.
-      # '--target install' akan menyalin semua hasil ke direktori instalasi.
       - name: Build
         run: cmake --build build --config Release --target install
 
@@ -85,15 +78,11 @@ jobs:
       # Langkah 9: Menjalankan Skrip untuk Membuat Installer .exe
       - name: Build installer
         shell: msys2 {0}
-        # Menjalankan skrip 'nsis/build.sh' yang akan mengemas semuanya menjadi satu file setup.
         run: bash nsis/build.sh
 
       # Langkah 10: Mengunggah Installer sebagai "Artifact"
-      # 'upload-artifact' adalah action siap pakai untuk menyimpan file hasil build.
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          # Nama artifact yang akan ditampilkan di halaman ringkasan build.
           name: tesseract-ocr-installer-windows
-          # Path ke file yang akan diunggah. Tanda '*' adalah wildcard.
           path: nsis/tesseract-ocr-*.exe
