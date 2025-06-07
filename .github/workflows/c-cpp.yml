@@ -282,34 +282,35 @@ jobs:
           Write-Host "`nFinal contents of staging directory (files only):"
           Get-ChildItem $stagingDir -File | Select-Object Name, Length
           
-          # Create ZIP file using simple Compress-Archive with wildcard
-          $zipName = "tesseract-ocr-windows-x64.zip"
-          $zipPath = "output/$zipName"
+          # # Create ZIP file using simple Compress-Archive with wildcard
+          # $zipName = "tesseract-ocr-windows-x64.zip"
+          # $zipPath = "output/$zipName"
           
-          # Remove existing ZIP if it exists
-          if (Test-Path $zipPath) {
-            Remove-Item $zipPath -Force
-          }
+          # # Remove existing ZIP if it exists
+          # if (Test-Path $zipPath) {
+          #   Remove-Item $zipPath -Force
+          # }
           
-          # Compress only the files (not directories) from staging
-          $filesToCompress = Join-Path $stagingDir "*"
-          Compress-Archive -Path $filesToCompress -DestinationPath $zipPath -CompressionLevel Optimal
+          # # Compress only the files (not directories) from staging
+          # $filesToCompress = Join-Path $stagingDir "*"
+          # Compress-Archive -Path $filesToCompress -DestinationPath $zipPath -CompressionLevel Optimal
           
-          Write-Host "Created ZIP file: $zipPath"
+          # Write-Host "Created ZIP file: $zipPath"
           
-          # Verify ZIP file was created
-          if (Test-Path $zipPath) {
-            $zipSize = (Get-Item $zipPath).Length
-            Write-Host "ZIP file size: $([math]::Round($zipSize / 1MB, 2)) MB"
-          } else {
-            Write-Error "Failed to create ZIP file!"
-            exit 1
-          }
+          # # Verify ZIP file was created
+          # if (Test-Path $zipPath) {
+          #   $zipSize = (Get-Item $zipPath).Length
+          #   Write-Host "ZIP file size: $([math]::Round($zipSize / 1MB, 2)) MB"
+          # } else {
+          #   Write-Error "Failed to create ZIP file!"
+          #   exit 1
+          # }
 
       # Langkah 12: Upload Build Artifact
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
           name: tesseract-ocr-windows-x64
-          path: output/tesseract-ocr-windows-x64.zip
+          # Ubah baris ini untuk menunjuk ke direktori
+          path: output/staging/
           retention-days: 30
