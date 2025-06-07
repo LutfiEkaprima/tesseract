@@ -50,6 +50,7 @@ jobs:
         run: |
           git clone https://github.com/microsoft/vcpkg.git D:/a/vcpkg
           D:/a/vcpkg/bootstrap-vcpkg.bat
+        shell: cmd
 
       # Langkah 4: Menambahkan vcpkg ke PATH
       # Ini membuat perintah 'vcpkg' bisa dijalankan langsung di langkah-langkah berikutnya.
