@@ -194,7 +194,9 @@ jobs:
             "openjp2.dll",
             "tiff.dll",
             "zlib1.dll",
-            "archive.dll"
+            "archive.dll",
+            "bz2.dll",
+            "lz4.dll"
           )
           
           if (Test-Path $vcpkgBinPath) {
