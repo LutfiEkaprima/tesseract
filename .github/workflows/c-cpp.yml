@@ -71,6 +71,8 @@ jobs:
           vcpkg install libarchive:x64-windows
           vcpkg install curl:x64-windows
           vcpkg install icu:x64-windows
+          echo "Installed packages:"
+          vcpkg list
         shell: pwsh
 
       # Langkah 7: Mengkonfigurasi Proyek dengan CMake
@@ -80,6 +82,11 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
           -DBUILD_TRAINING_TOOLS=ON
+          -DSW_BUILD=OFF
+          -DUSE_SYSTEM_ICU=ON
+          -DBUILD_SHARED_LIBS=OFF
+          -DOPENMP_BUILD=OFF
+          -DCMAKE_INSTALL_PREFIX=build/install
 
       # Langkah 8: Mengkompilasi Kode dan Menjalankan Instalasi
       - name: Build
