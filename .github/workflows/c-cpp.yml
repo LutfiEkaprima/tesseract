@@ -15,28 +15,23 @@ on:
   workflow_dispatch:
 
 # Jobs: Daftar pekerjaan (tasks) yang akan dieksekusi dalam alur kerja ini.
-# Untuk kasus ini, kita hanya memiliki satu pekerjaan utama yang bernama "build".
 jobs:
   build:
     # 'runs-on' menentukan jenis mesin virtual yang akan digunakan untuk menjalankan pekerjaan ini.
-    # 'windows-latest' berarti GitHub akan menyediakan mesin virtual baru dengan
-    # versi Windows Server terbaru yang tersedia. Ini menjamin lingkungan build yang bersih setiap saat.
+    # 'windows-latest' menjamin lingkungan build yang bersih setiap saat.
     runs-on: windows-latest
 
     # Steps: Rangkaian langkah-langkah sekuensial yang akan dieksekusi oleh pekerjaan "build".
     steps:
       # Langkah 1: Checkout Kode Sumber
-      # Menggunakan 'action' siap pakai dari GitHub untuk mengunduh kode dari repositori.
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Opsi ini sangat penting. Sama dengan menjalankan 'git submodule update --init --recursive'.
-          # Ini memastikan semua dependensi eksternal (seperti Leptonica) ikut terunduh.
+          # Mengunduh semua submodule seperti Leptonica.
           submodules: 'recursive'
 
       # Langkah 2: Menyiapkan Lingkungan MSYS2
-      # Diperlukan untuk dapat menjalankan skrip shell (.sh) di lingkungan Windows,
-      # karena skrip pembuat installer (nsis/build.sh) ditulis dalam format tersebut.
+      # Diperlukan untuk dapat menjalankan skrip shell (.sh) di lingkungan Windows.
       - name: Setup MSYS2
         uses: msys2/setup-msys2@v2
         with:
@@ -49,60 +44,51 @@ jobs:
             wget
             p7zip
 
-      # Langkah 3: Menggunakan Cache untuk Mempercepat vcpkg
-      # Menyimpan hasil instalasi vcpkg dari proses sebelumnya agar tidak perlu
-      # mengunduh dan mengkompilasi ulang semuanya setiap kali, sehingga menghemat waktu.
-      - name: Restore vcpkg and its artifacts from cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ${{ env.VCPKG_ROOT }}
-            ${{ env.VCPKG_ROOT_WIN }}
-            ${{ runner.tool_cache }}/vcpkg_root
-            ${{ env.VCPKG_BINARY_SOURCES_WIN }}
-          key: vcpkg-${{ runner.os }}-${{ hashFiles('nsis/build.sh') }}
+      # Langkah 3: Mengunduh dan Menyiapkan vcpkg Secara Manual
+      # Kita tidak lagi menggunakan action lukka/run-vcpkg untuk menghindari masalah kompatibilitas.
+      - name: Clone and Bootstrap vcpkg
+        run: |
+          git clone https://github.com/microsoft/vcpkg.git D:/a/vcpkg
+          D:/a/vcpkg/bootstrap-vcpkg.bat
+        shell: cmd
 
-      # Langkah 4: Menyiapkan Lingkungan vcpkg
-      # Langkah ini hanya memastikan vcpkg ada dan siap digunakan.
-      - name: Setup vcpkg environment
-        uses: lukka/run-vcpkg@v11
-        with:
-          # Kita tidak lagi menjalankan instalasi di sini, hanya setup.
-          vcpkgTriplet: x64-windows
+      # Langkah 4: Menambahkan vcpkg ke PATH
+      # Ini membuat perintah 'vcpkg' bisa dijalankan langsung di langkah-langkah berikutnya.
+      - name: Add vcpkg to PATH
+        run: echo "D:\a\vcpkg" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        shell: pwsh
 
-      # Langkah 4.1: Instal Dependensi Secara Manual
-      # Kita menjalankan perintah instalasi secara eksplisit untuk menghindari masalah dengan action.
-      - name: Install dependencies manually via vcpkg
+      # Langkah 5: Instal Dependensi Menggunakan vcpkg
+      # Menjalankan perintah instalasi secara eksplisit.
+      - name: Install dependencies via vcpkg
         run: vcpkg install leptonica libarchive libcurl icu --triplet x64-windows
 
-      # Langkah 5: Mengkonfigurasi Proyek dengan CMake
-      # Menghasilkan file build (misalnya untuk Visual Studio atau Ninja) dari kode sumber.
+      # Langkah 6: Mengkonfigurasi Proyek dengan CMake
+      # Menghasilkan file build dari kode sumber.
       - name: Configure CMake
         run: >
           cmake -G Ninja -S . -B build
           -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE=${{ env.VCPKG_ROOT }}/scripts/buildsystems/vcpkg.cmake
-          -DLeptonica_DIR=${{ env.VCPKG_ROOT }}/installed/x64-windows/share/leptonica
+          -DCMAKE_TOOLCHAIN_FILE=D:/a/vcpkg/scripts/buildsystems/vcpkg.cmake
           -DBUILD_TRAINING_TOOLS=ON
 
-      # Langkah 6: Mengkompilasi Kode dan Menjalankan Instalasi
+      # Langkah 7: Mengkompilasi Kode dan Menjalankan Instalasi
       # 'cmake --build' akan memanggil kompiler untuk membangun proyek.
-      # '--target install' akan menyalin semua hasil (.exe, .dll, tessdata) ke direktori instalasi.
+      # '--target install' akan menyalin semua hasil ke direktori instalasi.
       - name: Build
         run: cmake --build build --config Release --target install
 
-      # Langkah 7: Menginstal NSIS (Alat Pembuat Installer)
-      # Menggunakan Chocolatey (manajer paket untuk Windows) untuk menginstal NSIS dengan cepat.
+      # Langkah 8: Menginstal NSIS (Alat Pembuat Installer)
       - name: Install NSIS
-        run: choco install nsis
+        run: choco install nsis -y
 
-      # Langkah 8: Menjalankan Skrip untuk Membuat Installer .exe
+      # Langkah 9: Menjalankan Skrip untuk Membuat Installer .exe
       - name: Build installer
         shell: msys2 {0}
         # Menjalankan skrip 'nsis/build.sh' yang akan mengemas semuanya menjadi satu file setup.
         run: bash nsis/build.sh
 
-      # Langkah 9: Mengunggah Installer sebagai "Artifact"
+      # Langkah 10: Mengunggah Installer sebagai "Artifact"
       # 'upload-artifact' adalah action siap pakai untuk menyimpan file hasil build.
       - name: Upload installer
         uses: actions/upload-artifact@v4
