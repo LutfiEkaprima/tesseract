@@ -38,42 +38,63 @@ jobs:
             wget
             p7zip
 
-      # Langkah 3: Setup vcpkg menggunakan action yang lebih reliable
-      - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
+      # Langkah 3: Cache vcpkg untuk mempercepat build
+      - name: Cache vcpkg
+        uses: actions/cache@v4
         with:
-          vcpkgGitCommitId: 'latest'
+          path: |
+            C:/vcpkg
+            C:/vcpkg/installed
+          key: ${{ runner.os }}-vcpkg-${{ hashFiles('**/vcpkg.json') }}
+          restore-keys: |
+            ${{ runner.os }}-vcpkg-
 
-      # Langkah 4: Instal Dependensi Menggunakan vcpkg (diperbaiki nama package)
-      - name: Install dependencies via vcpkg
-        run: vcpkg install leptonica libarchive curl icu --triplet x64-windows
+      # Langkah 4: Setup vcpkg
+      - name: Setup vcpkg
+        run: |
+          if (!(Test-Path "C:/vcpkg")) {
+            git clone https://github.com/Microsoft/vcpkg.git C:/vcpkg
+            cd C:/vcpkg
+            ./bootstrap-vcpkg.bat
+          }
+          echo "C:/vcpkg" >> $env:GITHUB_PATH
+        shell: pwsh
 
       # Langkah 5: Setup Ninja build system
       - name: Setup Ninja
         uses: seanmiddleditch/gha-setup-ninja@master
 
-      # Langkah 6: Mengkonfigurasi Proyek dengan CMake
+      # Langkah 6: Instal Dependensi Menggunakan vcpkg (diperbaiki nama package)
+      - name: Install dependencies via vcpkg
+        run: |
+          vcpkg install leptonica:x64-windows
+          vcpkg install libarchive:x64-windows
+          vcpkg install curl:x64-windows
+          vcpkg install icu:x64-windows
+        shell: pwsh
+
+      # Langkah 7: Mengkonfigurasi Proyek dengan CMake
       - name: Configure CMake
         run: >
           cmake -G Ninja -S . -B build
           -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
           -DBUILD_TRAINING_TOOLS=ON
 
-      # Langkah 7: Mengkompilasi Kode dan Menjalankan Instalasi
+      # Langkah 8: Mengkompilasi Kode dan Menjalankan Instalasi
       - name: Build
         run: cmake --build build --config Release --target install
 
-      # Langkah 8: Menginstal NSIS (Alat Pembuat Installer)
+      # Langkah 9: Menginstal NSIS (Alat Pembuat Installer)
       - name: Install NSIS
         run: choco install nsis -y
 
-      # Langkah 9: Menjalankan Skrip untuk Membuat Installer .exe
+      # Langkah 10: Menjalankan Skrip untuk Membuat Installer .exe
       - name: Build installer
         shell: msys2 {0}
         run: bash nsis/build.sh
 
-      # Langkah 10: Mengunggah Installer sebagai "Artifact"
+      # Langkah 11: Mengunggah Installer sebagai "Artifact"
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
