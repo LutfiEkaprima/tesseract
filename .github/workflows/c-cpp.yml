@@ -25,29 +25,26 @@ jobs:
           # Mengunduh semua submodule seperti Leptonica.
           submodules: 'recursive'
 
-      # Langkah 2: Menyiapkan Lingkungan MSYS2
-      - name: Setup MSYS2
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            git
-            make
-            unzip
-            wget
-            p7zip
+      # Langkah 2: Setup Visual Studio Build Tools
+      - name: Setup Visual Studio Build Tools
+        uses: microsoft/setup-msbuild@v2
 
-      # Langkah 3: Cache vcpkg untuk mempercepat build
+      # Langkah 3: Setup Developer Command Prompt
+      - name: Setup Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Langkah 4: Cache vcpkg untuk mempercepat build
       - name: Cache vcpkg
         uses: actions/cache@v4
         with:
           path: |
             C:/vcpkg
             C:/vcpkg/installed
-          key: ${{ runner.os }}-vcpkg-${{ hashFiles('**/vcpkg.json') }}
+          key: ${{ runner.os }}-vcpkg-msvc-${{ hashFiles('**/vcpkg.json') }}
           restore-keys: |
-            ${{ runner.os }}-vcpkg-
+            ${{ runner.os }}-vcpkg-msvc-
 
       # Langkah 4: Setup vcpkg
       - name: Setup vcpkg
@@ -71,37 +68,54 @@ jobs:
           vcpkg install libarchive:x64-windows
           vcpkg install curl:x64-windows
           vcpkg install icu:x64-windows
+          vcpkg install pkgconf:x64-windows
           echo "Installed packages:"
           vcpkg list
         shell: pwsh
 
-      # Langkah 7: Mengkonfigurasi Proyek dengan CMake
+      # Langkah 8: Mengkonfigurasi Proyek dengan CMake
       - name: Configure CMake
         run: >
-          cmake -G Ninja -S . -B build
+          cmake -G "Visual Studio 17 2022" -A x64 -S . -B build
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
           -DBUILD_TRAINING_TOOLS=ON
           -DSW_BUILD=OFF
-          -DUSE_SYSTEM_ICU=ON
-          -DBUILD_SHARED_LIBS=OFF
+          -DBUILD_SHARED_LIBS=ON
           -DOPENMP_BUILD=OFF
+          -DCPPAN_BUILD=OFF
+          -DUSE_SYSTEM_ICU=OFF
           -DCMAKE_INSTALL_PREFIX=build/install
+        env:
+          PKG_CONFIG_PATH: C:/vcpkg/installed/x64-windows/lib/pkgconfig
 
-      # Langkah 8: Mengkompilasi Kode dan Menjalankan Instalasi
+      # Langkah 9: Mengkompilasi Kode dan Menjalankan Instalasi
       - name: Build
         run: cmake --build build --config Release --target install
 
-      # Langkah 9: Menginstal NSIS (Alat Pembuat Installer)
+      # Langkah 10: Setup MSYS2 untuk NSIS build script
+      - name: Setup MSYS2 for NSIS
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            make
+            unzip
+            wget
+            p7zip
+
+      # Langkah 11: Menginstal NSIS (Alat Pembuat Installer)
       - name: Install NSIS
         run: choco install nsis -y
 
-      # Langkah 10: Menjalankan Skrip untuk Membuat Installer .exe
+      # Langkah 12: Menjalankan Skrip untuk Membuat Installer .exe
       - name: Build installer
         shell: msys2 {0}
         run: bash nsis/build.sh
 
-      # Langkah 11: Mengunggah Installer sebagai "Artifact"
+      # Langkah 13: Mengunggah Installer sebagai "Artifact"
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
