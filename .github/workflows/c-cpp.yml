@@ -178,45 +178,52 @@ jobs:
           Write-Host "Copying files from $buildOutput to $stagingDir"
           Copy-Item -Path "$buildOutput/*" -Destination $stagingDir -Recurse -Force
           
-          # Copy vcpkg DLL dependencies
-          Write-Host "Copying vcpkg DLL dependencies..."
-          $vcpkgBinPaths = @(
-            "C:/vcpkg/installed/x64-windows/bin",
-            "C:/vcpkg/installed/x64-windows/debug/bin"
+          # Copy specific required DLL dependencies
+          Write-Host "Copying required DLL dependencies..."
+          $vcpkgBinPath = "C:/vcpkg/installed/x64-windows/bin"
+          
+          # Define exact DLL names that are required
+          $requiredDlls = @(
+            "gif.dll",
+            "jpeg62.dll", 
+            "leptonica-1.85.0.dll",
+            "liblzma.dll",
+            "libpng16.dll",
+            "libsharpyuv.dll",
+            "libwebp.dll",
+            "openjp2.dll",
+            "tiff.dll",
+            "zlib1.dll",
+            "archive.dll"
           )
           
-          foreach ($vcpkgBinPath in $vcpkgBinPaths) {
-            if (Test-Path $vcpkgBinPath) {
-              Write-Host "Checking vcpkg bin path: $vcpkgBinPath"
-              $vcpkgDlls = Get-ChildItem -Path $vcpkgBinPath -Filter "*.dll"
+          if (Test-Path $vcpkgBinPath) {
+            Write-Host "Checking vcpkg bin path: $vcpkgBinPath"
+            Write-Host "Available DLLs in vcpkg bin:"
+            Get-ChildItem -Path $vcpkgBinPath -Filter "*.dll" | ForEach-Object {
+              Write-Host "  Available: $($_.Name)"
+            }
+            
+            Write-Host "`nCopying required DLLs:"
+            foreach ($dllName in $requiredDlls) {
+              $sourcePath = Join-Path $vcpkgBinPath $dllName
+              $destPath = Join-Path $stagingDir $dllName
               
-              # Copy important DLLs (leptonica, libarchive, and other dependencies)
-              $importantDlls = @(
-                "lept*.dll",
-                "libarchive*.dll", 
-                "libbz2*.dll",
-                "liblzma*.dll",
-                "libzstd*.dll",
-                "zlib*.dll",
-                "libpng*.dll",
-                "jpeg*.dll",
-                "tiff*.dll",
-                "gif*.dll",
-                "webp*.dll",
-                "openjp2*.dll"
-              )
-              
-              foreach ($pattern in $importantDlls) {
-                $matchingDlls = Get-ChildItem -Path $vcpkgBinPath -Filter $pattern -ErrorAction SilentlyContinue
-                foreach ($dll in $matchingDlls) {
-                  $destPath = Join-Path $stagingDir $dll.Name
-                  if (-not (Test-Path $destPath)) {
-                    Copy-Item $dll.FullName $destPath -Force
-                    Write-Host "Copied: $($dll.Name)"
-                  }
+              if (Test-Path $sourcePath) {
+                Copy-Item $sourcePath $destPath -Force
+                Write-Host "  ✓ Copied: $dllName"
+              } else {
+                Write-Warning "  ✗ NOT FOUND: $dllName"
+                # Try to find similar named files
+                $similarFiles = Get-ChildItem -Path $vcpkgBinPath -Filter "*$($dllName.Split('.')[0])*" -ErrorAction SilentlyContinue
+                if ($similarFiles.Count -gt 0) {
+                  Write-Host "    Similar files found:"
+                  $similarFiles | ForEach-Object { Write-Host "      $($_.Name)" }
                 }
               }
             }
+          } else {
+            Write-Warning "vcpkg bin path not found: $vcpkgBinPath"
           }
           
           # Also copy any additional directories that might be needed
@@ -259,14 +266,32 @@ jobs:
           
           $versionInfo | Out-File -FilePath "$stagingDir/BUILD_INFO.txt" -Encoding UTF8
           
-          # List all DLL files that will be included
-          Write-Host "DLL files included in the package:"
+          # List all DLL files that are actually included
+          Write-Host "`nFinal DLL files included in the package:"
           Get-ChildItem -Path $stagingDir -Filter "*.dll" | ForEach-Object {
             Write-Host "  $($_.Name) - $([math]::Round($_.Length / 1KB, 2)) KB"
           }
           
+          # Verify we have the required DLLs
+          Write-Host "`nVerifying required DLLs:"
+          $missingDlls = @()
+          foreach ($dllName in $requiredDlls) {
+            $dllPath = Join-Path $stagingDir $dllName
+            if (Test-Path $dllPath) {
+              Write-Host "  ✓ $dllName"
+            } else {
+              Write-Host "  ✗ $dllName (MISSING)"
+              $missingDlls += $dllName
+            }
+          }
+          
+          if ($missingDlls.Count -gt 0) {
+            Write-Warning "Missing required DLLs: $($missingDlls -join ', ')"
+            Write-Host "Build will continue, but the executable might not work properly"
+          }
+          
           # Show contents of staging directory
-          Write-Host "Complete contents of staging directory:"
+          Write-Host "`nComplete contents of staging directory:"
           Get-ChildItem -Recurse $stagingDir | Select-Object FullName, Length
           
           # Create ZIP file from staging directory contents (not the directory itself)
