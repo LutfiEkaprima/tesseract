@@ -181,6 +181,17 @@ jobs:
             Copy-Item $file.FullName (Join-Path $stagingDir $file.Name) -Force
             Write-Host "Copied: $($file.Name)"
           }
+
+          # Secara eksplisit salin folder 'share' jika ada
+          Write-Host "Checking for 'share' directory..."
+          $shareDirSource = Join-Path $buildOutput "share"
+          if (Test-Path $shareDirSource) {
+              Write-Host "Found 'share' directory, copying to staging..."
+              Copy-Item -Path $shareDirSource -Destination $stagingDir -Recurse -Force
+              Write-Host "Successfully copied 'share' directory."
+          } else {
+              Write-Warning "'share' directory not found in build output, skipping."
+          }
           
           # Copy specific required DLL dependencies
           Write-Host "Copying required DLL dependencies..."
