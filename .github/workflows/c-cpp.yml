@@ -244,8 +244,8 @@ jobs:
             Write-Warning "vcpkg bin path not found: $vcpkgBinPath"
           }
 
-          # Copy ENTIRE share directory and all its contents
-          Write-Host "`nSearching for share directory..."
+          # Copy share directory contents DIRECTLY to root (without 'share' folder)
+          Write-Host "`nSearching for share directory to copy contents directly..."
           $sharePaths = @(
             "build/install/share",
             "build/share", 
@@ -258,33 +258,34 @@ jobs:
             if (Test-Path $sharePath) {
               Write-Host "Found share directory at: $sharePath"
               
-              # Get all contents in share directory
-              $shareContents = Get-ChildItem -Path $sharePath -Recurse
-              Write-Host "Share directory contains $($shareContents.Count) items total"
-              
-              # List what we found
-              $directories = $shareContents | Where-Object { $_.PSIsContainer }
-              $files = $shareContents | Where-Object { -not $_.PSIsContainer }
-              Write-Host "  - $($directories.Count) directories"
-              Write-Host "  - $($files.Count) files"
-              
-              if ($directories.Count -gt 0) {
-                Write-Host "Directories found:"
-                $directories | ForEach-Object { Write-Host "    $($_.FullName)" }
+              # Get all subdirectories and files in share
+              $shareItems = Get-ChildItem -Path $sharePath
+              Write-Host "Share directory contains:"
+              $shareItems | ForEach-Object { 
+                if ($_.PSIsContainer) {
+                  $itemCount = (Get-ChildItem -Path $_.FullName -Recurse).Count
+                  Write-Host "    📁 $($_.Name)/ ($itemCount items)"
+                } else {
+                  Write-Host "    📄 $($_.Name)"
+                }
               }
               
-              # Create share directory in staging
-              $destSharePath = Join-Path $stagingDir "share"
-              New-Item -ItemType Directory -Force -Path $destSharePath
+              # Copy each item directly to staging root
+              foreach ($item in $shareItems) {
+                $destPath = Join-Path $stagingDir $item.Name
+                
+                if ($item.PSIsContainer) {
+                  # Copy directory
+                  Copy-Item -Path $item.FullName -Destination $destPath -Recurse -Force
+                  Write-Host "✓ Copied directory: $($item.Name)/"
+                } else {
+                  # Copy file
+                  Copy-Item -Path $item.FullName -Destination $destPath -Force
+                  Write-Host "✓ Copied file: $($item.Name)"
+                }
+              }
               
-              # Copy ALL contents of share directory recursively
-              Copy-Item -Path "$sharePath/*" -Destination $destSharePath -Recurse -Force
-              Write-Host "Successfully copied ENTIRE share directory to staging"
-              
-              # Verify what was copied
-              $copiedItems = Get-ChildItem -Path $destSharePath -Recurse
-              Write-Host "Copied $($copiedItems.Count) items to share directory"
-              
+              Write-Host "Successfully copied ALL share contents directly to root"
               $shareFound = $true
               break
             } else {
@@ -297,39 +298,68 @@ jobs:
             Write-Host "Searching for share directory anywhere in build output..."
             
             # Search for any share directory in the entire build output
-            $allShareDirs = Get-ChildItem -Path "build" -Name "share" -Directory -Recurse -ErrorAction SilentlyContinue
-            if ($allShareDirs.Count -gt 0) {
-              Write-Host "Found share directories in build:"
-              $allShareDirs | ForEach-Object { 
-                $fullPath = Join-Path "build" $_
-                Write-Host "  $fullPath"
-                
-                # Use the first one found
-                if (-not $shareFound) {
-                  Write-Host "Using share directory: $fullPath"
-                  $destSharePath = Join-Path $stagingDir "share"
-                  New-Item -ItemType Directory -Force -Path $destSharePath
-                  Copy-Item -Path "$fullPath/*" -Destination $destSharePath -Recurse -Force
-                  Write-Host "Copied share directory contents"
-                  $shareFound = $true
+            if (Test-Path "build") {
+              $allShareDirs = Get-ChildItem -Path "build" -Name "share" -Directory -Recurse -ErrorAction SilentlyContinue
+              if ($allShareDirs.Count -gt 0) {
+                Write-Host "Found share directories in build:"
+                foreach ($shareDir in $allShareDirs) {
+                  $fullSharePath = Get-ChildItem -Path "build" -Filter "share" -Directory -Recurse | Select-Object -First 1 | Select-Object -ExpandProperty FullName
+                  Write-Host "  Using: $fullSharePath"
+                  
+                  if (Test-Path $fullSharePath) {
+                    $shareItems = Get-ChildItem -Path $fullSharePath
+                    foreach ($item in $shareItems) {
+                      $destPath = Join-Path $stagingDir $item.Name
+                      if ($item.PSIsContainer) {
+                        Copy-Item -Path $item.FullName -Destination $destPath -Recurse -Force
+                        Write-Host "✓ Copied directory: $($item.Name)/"
+                      } else {
+                        Copy-Item -Path $item.FullName -Destination $destPath -Force
+                        Write-Host "✓ Copied file: $($item.Name)"
+                      }
+                    }
+                    $shareFound = $true
+                    break
+                  }
                 }
               }
             }
             
-            # If still not found, try to download minimal tessdata
+            # If still not found, create minimal tessdata directly in root
             if (-not $shareFound) {
-              Write-Warning "No share directory found anywhere. Creating minimal tessdata..."
-              $destTessdataPath = Join-Path $stagingDir "share/tessdata"
+              Write-Warning "No share directory found anywhere. Creating minimal tessdata directly in root..."
+              $destTessdataPath = Join-Path $stagingDir "tessdata"
               New-Item -ItemType Directory -Force -Path $destTessdataPath
               
               try {
-                $engUrl = "https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata"
-                $engPath = Join-Path $destTessdataPath "eng.traineddata"
-                Invoke-WebRequest -Uri $engUrl -OutFile $engPath
-                Write-Host "Downloaded eng.traineddata as fallback"
+                Write-Host "Downloading basic language files..."
+                $languageFiles = @(
+                  @{ name = "eng.traineddata"; url = "https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata" },
+                  @{ name = "osd.traineddata"; url = "https://github.com/tesseract-ocr/tessdata/raw/main/osd.traineddata" }
+                )
+                
+                foreach ($langFile in $languageFiles) {
+                  $filePath = Join-Path $destTessdataPath $langFile.name
+                  Write-Host "Downloading $($langFile.name)..."
+                  Invoke-WebRequest -Uri $langFile.url -OutFile $filePath
+                  Write-Host "✓ Downloaded: $($langFile.name)"
+                }
+                
+                Write-Host "Created minimal tessdata directory with basic language files"
               } catch {
                 Write-Warning "Failed to download tessdata: $($_.Exception.Message)"
               }
+            }
+          }
+
+          # Verify final structure
+          Write-Host "`nFinal staging directory structure:"
+          Get-ChildItem -Path $stagingDir | ForEach-Object {
+            if ($_.PSIsContainer) {
+              $itemCount = (Get-ChildItem -Path $_.FullName -Recurse).Count
+              Write-Host "  📁 $($_.Name)/ ($itemCount items)"
+            } else {
+              Write-Host "  📄 $($_.Name) ($([math]::Round($_.Length / 1KB, 1)) KB)"
             }
           }
           
