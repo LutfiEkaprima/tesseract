@@ -243,9 +243,74 @@ jobs:
           } else {
             Write-Warning "vcpkg bin path not found: $vcpkgBinPath"
           }
+
+          # Copy tessdata directory
+          Write-Host "`nSearching for tessdata directory..."
+          $tessdataPaths = @(
+            "build/install/share/tessdata",
+            "build/install/share/tesseract/tessdata",
+            "build/share/tessdata", 
+            "build/share/tesseract/tessdata",
+            "C:/vcpkg/installed/x64-windows/share/tesseract/tessdata",
+            "tessdata"
+          )
+
+          $tessdataFound = $false
+          foreach ($tessdataPath in $tessdataPaths) {
+            Write-Host "Checking tessdata path: $tessdataPath"
+            if (Test-Path $tessdataPath) {
+              Write-Host "Found tessdata at: $tessdataPath"
+              $tessdataFiles = Get-ChildItem -Path $tessdataPath -File -Filter "*.traineddata"
+              Write-Host "Found $($tessdataFiles.Count) traineddata files"
+              
+              if ($tessdataFiles.Count -gt 0) {
+                $destTessdataPath = Join-Path $stagingDir "tessdata"
+                New-Item -ItemType Directory -Force -Path $destTessdataPath
+                Copy-Item -Path "$tessdataPath/*" -Destination $destTessdataPath -Recurse -Force
+                Write-Host "Successfully copied tessdata directory with $($tessdataFiles.Count) language files"
+                $tessdataFound = $true
+                break
+              }
+            }
+          }
+
+          if (-not $tessdataFound) {
+            Write-Warning "tessdata directory not found. Downloading basic English language data..."
+            # Download minimal English tessdata
+            $destTessdataPath = Join-Path $stagingDir "tessdata"
+            New-Item -ItemType Directory -Force -Path $destTessdataPath
+            
+            try {
+              $engUrl = "https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata"
+              $engPath = Join-Path $destTessdataPath "eng.traineddata"
+              Invoke-WebRequest -Uri $engUrl -OutFile $engPath
+              Write-Host "Downloaded eng.traineddata successfully"
+              $tessdataFound = $true
+            } catch {
+              Write-Warning "Failed to download tessdata: $($_.Exception.Message)"
+            }
+          }
+
+          # Copy other share directory contents if they exist
+          Write-Host "`nChecking for other share directory contents..."
+          $sharePaths = @(
+            "build/install/share",
+            "build/share", 
+            "C:/vcpkg/installed/x64-windows/share/tesseract"
+          )
           
-          # Remove the tessdata and share directory copying to avoid subfolders
-          # We'll only copy essential files to keep the ZIP clean
+          foreach ($sharePath in $sharePaths) {
+            if (Test-Path $sharePath) {
+              Write-Host "Found share directory at: $sharePath"
+              $shareItems = Get-ChildItem -Path $sharePath -Directory | Where-Object { $_.Name -ne "tessdata" }
+              foreach ($item in $shareItems) {
+                $destPath = Join-Path $stagingDir $item.Name
+                Copy-Item -Path $item.FullName -Destination $destPath -Recurse -Force
+                Write-Host "Copied share item: $($item.Name)"
+              }
+              break
+            }
+          }
           
           # Copy root level additional files if they exist (only files)
           $additionalFiles = @("README.md", "LICENSE", "CHANGELOG.md")
