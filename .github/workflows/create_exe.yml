@@ -1,0 +1,193 @@
+# Nama alur kerja (workflow) yang akan ditampilkan di tab "Actions" pada repositori GitHub Anda.
+name: create
+
+# Pemicu (Triggers): Mendefinisikan kapan alur kerja ini akan dijalankan secara otomatis.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Jobs: Daftar pekerjaan (tasks) yang akan dieksekusi dalam alur kerja ini.
+jobs:
+  build:
+    # 'runs-on' menentukan jenis mesin virtual yang akan digunakan untuk menjalankan pekerjaan ini.
+    # 'windows-latest' menjamin lingkungan build yang bersih setiap saat.
+    runs-on: windows-latest
+
+    # Steps: Rangkaian langkah-langkah sekuensial yang akan dieksekusi oleh pekerjaan "build".
+    steps:
+      # Langkah 1: Checkout Kode Sumber
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Mengunduh semua submodule seperti Leptonica.
+          submodules: 'recursive'
+
+      # Langkah 2: Setup Visual Studio Build Tools
+      - name: Setup Visual Studio Build Tools
+        uses: microsoft/setup-msbuild@v2
+
+      # Langkah 3: Setup Developer Command Prompt
+      - name: Setup Developer Command Prompt
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      # Langkah 4: Cache vcpkg untuk mempercepat build
+      - name: Cache vcpkg
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:/vcpkg
+            C:/vcpkg/installed
+          key: ${{ runner.os }}-vcpkg-msvc-${{ hashFiles('**/vcpkg.json') }}
+          restore-keys: |
+            ${{ runner.os }}-vcpkg-msvc-
+
+      # Langkah 5: Setup vcpkg
+      - name: Setup vcpkg
+        run: |
+          if (!(Test-Path "C:/vcpkg")) {
+            git clone https://github.com/Microsoft/vcpkg.git C:/vcpkg
+            cd C:/vcpkg
+            ./bootstrap-vcpkg.bat
+          }
+          echo "C:/vcpkg" >> $env:GITHUB_PATH
+        shell: pwsh
+
+      # Langkah 6: Setup Ninja build system
+      - name: Setup Ninja
+        uses: seanmiddleditch/gha-setup-ninja@master
+
+      # Langkah 7: Instal Dependensi Menggunakan vcpkg (minimal dependencies)
+      - name: Install dependencies via vcpkg
+        run: |
+          vcpkg install leptonica:x64-windows
+          vcpkg install libarchive:x64-windows
+          echo "Installed packages:"
+          vcpkg list
+        shell: pwsh
+
+      # Langkah 8: Mengkonfigurasi Proyek dengan CMake (minimal build)
+      - name: Configure CMake
+        run: >
+          cmake -G "Visual Studio 17 2022" -A x64 -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
+          -DBUILD_TRAINING_TOOLS=OFF
+          -DSW_BUILD=OFF
+          -DBUILD_SHARED_LIBS=ON
+          -DOPENMP_BUILD=OFF
+          -DCPPAN_BUILD=OFF
+          -DUSE_SYSTEM_ICU=OFF
+          -DDISABLE_CURL=ON
+          -DCMAKE_INSTALL_PREFIX=build/install
+
+      # Langkah 9: Mengkompilasi Kode dan Menjalankan Instalasi
+      - name: Build
+        run: cmake --build build --config Release --target install
+
+      # Langkah 10: Verify Build Output
+      - name: Verify Build Output
+        shell: pwsh
+        run: |
+          Write-Host "Checking build output directory structure:"
+          if (Test-Path "build/install") {
+            Write-Host "Contents of build/install:"
+            Get-ChildItem -Recurse "build/install" | Select-Object FullName, Length
+          } else {
+            Write-Host "build/install directory not found"
+            Write-Host "Checking other possible locations:"
+            $possiblePaths = @("build/bin", "build/Release", "build")
+            foreach ($path in $possiblePaths) {
+              if (Test-Path $path) {
+                Write-Host "Contents of $path :"
+                Get-ChildItem -Recurse $path | Select-Object FullName, Length
+              }
+            }
+          }
+
+      # Langkah 11: Create ZIP Archive
+      - name: Create ZIP Archive
+        shell: pwsh
+        run: |
+          # Create output directory
+          New-Item -ItemType Directory -Force -Path "output"
+          
+          # Find the build output directory
+          $buildOutput = $null
+          $possiblePaths = @(
+            "build/install",
+            "build/bin/Release", 
+            "build/Release",
+            "build/bin"
+          )
+          
+          foreach ($path in $possiblePaths) {
+            if (Test-Path $path) {
+              $files = Get-ChildItem -Path $path -File -Recurse
+              if ($files.Count -gt 0) {
+                Write-Host "Using build output from: $path"
+                $buildOutput = $path
+                break
+              }
+            }
+          }
+          
+          if (-not $buildOutput) {
+            Write-Error "No build output found!"
+            exit 1
+          }
+          
+          # Copy build output to staging directory
+          $stagingDir = "output/tesseract-ocr-windows-x64"
+          New-Item -ItemType Directory -Force -Path $stagingDir
+          Copy-Item -Path "$buildOutput/*" -Destination $stagingDir -Recurse -Force
+          
+          # Copy additional files if they exist
+          $additionalFiles = @("README.md", "LICENSE", "CHANGELOG.md")
+          foreach ($file in $additionalFiles) {
+            if (Test-Path $file) {
+              Copy-Item $file $stagingDir -Force
+              Write-Host "Copied $file to staging directory"
+            }
+          }
+          
+          # Create version info file
+          $versionInfo = @"
+Tesseract OCR - Windows x64 Build
+Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')
+Built from commit: $env:GITHUB_SHA
+Repository: $env:GITHUB_REPOSITORY
+Workflow: $env:GITHUB_WORKFLOW
+"@
+          $versionInfo | Out-File -FilePath "$stagingDir/BUILD_INFO.txt" -Encoding UTF8
+          
+          # Show contents of staging directory
+          Write-Host "Contents of staging directory:"
+          Get-ChildItem -Recurse $stagingDir | Select-Object FullName, Length
+          
+          # Create ZIP file
+          $zipName = "tesseract-ocr-windows-x64.zip"
+          Compress-Archive -Path $stagingDir -DestinationPath "output/$zipName" -CompressionLevel Optimal
+          
+          Write-Host "Created ZIP file: output/$zipName"
+          
+          # Verify ZIP file was created
+          if (Test-Path "output/$zipName") {
+            $zipSize = (Get-Item "output/$zipName").Length
+            Write-Host "ZIP file size: $($zipSize / 1MB) MB"
+          } else {
+            Write-Error "Failed to create ZIP file!"
+            exit 1
+          }
+
+      # Langkah 12: Upload ZIP sebagai Artifact
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tesseract-ocr-windows-x64
+          path: output/tesseract-ocr-windows-x64.zip
+          retention-days: 30
