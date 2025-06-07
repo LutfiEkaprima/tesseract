@@ -116,22 +116,51 @@ jobs:
           # Create output directory
           New-Item -ItemType Directory -Force -Path "output"
           
-          # Find the build output directory
+          # Find the build output directory with more comprehensive search
           $buildOutput = $null
           $possiblePaths = @(
-            "build/install",
-            "build/bin/Release", 
+            "build/install/bin",
+            "build/install", 
+            "build/bin/Release",
             "build/Release",
             "build/bin"
           )
           
+          Write-Host "Searching for build output..."
           foreach ($path in $possiblePaths) {
+            Write-Host "Checking: $path"
             if (Test-Path $path) {
               $files = Get-ChildItem -Path $path -File -Recurse
+              Write-Host "Found $($files.Count) files in $path"
               if ($files.Count -gt 0) {
-                Write-Host "Using build output from: $path"
-                $buildOutput = $path
-                break
+                # Look specifically for tesseract.exe or any .exe files
+                $exeFiles = $files | Where-Object { $_.Extension -eq ".exe" }
+                if ($exeFiles.Count -gt 0) {
+                  Write-Host "Found executable files in: $path"
+                  $buildOutput = $path
+                  break
+                }
+              }
+            } else {
+              Write-Host "Path does not exist: $path"
+            }
+          }
+          
+          if (-not $buildOutput) {
+            Write-Host "No build output with executables found. Checking all build directories..."
+            # Fallback: show all contents of build directory
+            if (Test-Path "build") {
+              Write-Host "Complete build directory structure:"
+              Get-ChildItem -Recurse "build" | Where-Object { $_.PSIsContainer -eq $false } | Select-Object FullName, Length
+              
+              # Try to find any .exe files anywhere in build
+              $allExeFiles = Get-ChildItem -Recurse "build" -Filter "*.exe"
+              if ($allExeFiles.Count -gt 0) {
+                Write-Host "Found .exe files:"
+                $allExeFiles | ForEach-Object { Write-Host $_.FullName }
+                # Use the directory of the first .exe file found
+                $buildOutput = Split-Path $allExeFiles[0].FullName -Parent
+                Write-Host "Using directory of first .exe found: $buildOutput"
               }
             }
           }
@@ -141,12 +170,26 @@ jobs:
             exit 1
           }
           
-          # Copy build output to staging directory
-          $stagingDir = "output/tesseract-ocr-windows-x64"
+          # Create staging directory (direct files, not nested folder)
+          $stagingDir = "output/staging"
           New-Item -ItemType Directory -Force -Path $stagingDir
+          
+          # Copy build output files directly
+          Write-Host "Copying files from $buildOutput to $stagingDir"
           Copy-Item -Path "$buildOutput/*" -Destination $stagingDir -Recurse -Force
           
-          # Copy additional files if they exist
+          # Also copy any additional directories that might be needed
+          $additionalDirs = @("share", "tessdata")
+          foreach ($dir in $additionalDirs) {
+            $sourcePath = Join-Path (Split-Path $buildOutput -Parent) $dir
+            if (Test-Path $sourcePath) {
+              $destPath = Join-Path $stagingDir $dir
+              Copy-Item -Path $sourcePath -Destination $destPath -Recurse -Force
+              Write-Host "Copied $dir directory to staging"
+            }
+          }
+          
+          # Copy root level additional files if they exist
           $additionalFiles = @("README.md", "LICENSE", "CHANGELOG.md")
           foreach ($file in $additionalFiles) {
             if (Test-Path $file) {
@@ -156,13 +199,11 @@ jobs:
           }
           
           # Create version info file
-          $versionInfo = @'
-          Tesseract OCR - Windows x64 Build
-          Build Date: {0}
-          Built from commit: {1}
-          Repository: {2}
-          Workflow: {3}
-          '@ -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $env:GITHUB_SHA, $env:GITHUB_REPOSITORY, $env:GITHUB_WORKFLOW
+          $versionInfo = "Tesseract OCR - Windows x64 Build`n"
+          $versionInfo += "Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n"
+          $versionInfo += "Built from commit: $env:GITHUB_SHA`n"
+          $versionInfo += "Repository: $env:GITHUB_REPOSITORY`n"
+          $versionInfo += "Workflow: $env:GITHUB_WORKFLOW`n"
           
           $versionInfo | Out-File -FilePath "$stagingDir/BUILD_INFO.txt" -Encoding UTF8
           
@@ -170,22 +211,25 @@ jobs:
           Write-Host "Contents of staging directory:"
           Get-ChildItem -Recurse $stagingDir | Select-Object FullName, Length
           
-          # Create ZIP file
+          # Create ZIP file from staging directory contents (not the directory itself)
           $zipName = "tesseract-ocr-windows-x64.zip"
-          Compress-Archive -Path $stagingDir -DestinationPath "output/$zipName" -CompressionLevel Optimal
+          $zipPath = "output/$zipName"
           
-          Write-Host "Created ZIP file: output/$zipName"
+          # Compress the contents of staging directory, not the directory itself
+          Compress-Archive -Path "$stagingDir/*" -DestinationPath $zipPath -CompressionLevel Optimal
+          
+          Write-Host "Created ZIP file: $zipPath"
           
           # Verify ZIP file was created
-          if (Test-Path "output/$zipName") {
-            $zipSize = (Get-Item "output/$zipName").Length
-            Write-Host "ZIP file size: $($zipSize / 1MB) MB"
+          if (Test-Path $zipPath) {
+            $zipSize = (Get-Item $zipPath).Length
+            Write-Host "ZIP file size: $([math]::Round($zipSize / 1MB, 2)) MB"
           } else {
             Write-Error "Failed to create ZIP file!"
             exit 1
           }
 
-      # Langkah 12: Upload ZIP sebagai Artifact
+      # Langkah 12: Upload Build Artifact
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
