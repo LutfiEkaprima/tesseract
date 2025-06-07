@@ -89,107 +89,34 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --target install
 
-      # Langkah 10: Setup MSYS2 untuk NSIS build script
-      - name: Setup MSYS2 for NSIS
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            git
-            make
-            unzip
-            wget
-            p7zip
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-
-      # Langkah 11: Menginstal NSIS (Alat Pembuat Installer)
+      # Langkah 10: Menginstal NSIS (Alat Pembuat Installer)
       - name: Install NSIS
         run: choco install nsis -y
 
-      # Langkah 12: Create modified build script
-      - name: Create Windows-compatible build script
-        shell: msys2 {0}
-        run: |
-          # Create a Windows-compatible version of the build script
-          cat > nsis/build-windows.sh << 'EOF'
-          #!/bin/bash
-          set -ex
-          
-          LANG=C.UTF-8
-          
-          # Set architecture
-          ARCH=""
-          if [ "$ARCH" = "i686" ]; then
-              ARCH=i686
-          else
-              ARCH=x86_64
-          fi
-          
-          MINGW=/mingw64
-          ROOTDIR=$(pwd)
-          DISTDIR="$ROOTDIR/dist"
-          HOST=x86_64-w64-mingw32
-          TAG=$(cat VERSION).$(date +%Y%m%d)
-          BUILDDIR="bin/ndebug/$HOST-$TAG"
-          PKG_ARCH=mingw-w64-x86-64
-          
-          # Install required MSYS2 packages instead of apt packages
-          echo "Installing MSYS2 packages..."
-          pacman -S --noconfirm --needed \
-              mingw-w64-x86_64-leptonica \
-              mingw-w64-x86_64-libarchive \
-              mingw-w64-x86_64-curl \
-              mingw-w64-x86_64-icu \
-              mingw-w64-x86_64-pango \
-              mingw-w64-x86_64-cairo || true
-          
-          # Create directories
-          mkdir -p "$DISTDIR"
-          mkdir -p "$BUILDDIR"
-          
-          echo "Build script completed successfully"
-          EOF
-          
-          chmod +x nsis/build-windows.sh
-
-      # Langkah 13: Run the Windows-compatible build script
-      - name: Build installer preparation
-        shell: msys2 {0}
-        run: bash nsis/build-windows.sh
-
-      # Langkah 14: Copy built files for installer
-      - name: Prepare installer files
+      # Langkah 11: Membuat Skrip NSIS
+      - name: Create NSIS script
         shell: pwsh
         run: |
           # Create installer directory structure
           New-Item -ItemType Directory -Force -Path "nsis/installer"
-          
+
           # Copy built tesseract files
           if (Test-Path "build/install/bin") {
             Copy-Item -Recurse "build/install/bin/*" "nsis/installer/"
           }
-          if (Test-Path "build/install/share") {
-            Copy-Item -Recurse "build/install/share" "nsis/installer/"
-          }
-          
+          # Create a minimal share/tessdata for the installer to work
+          New-Item -ItemType Directory -Force -Path "nsis/installer/share/tessdata"
+
           # Create LICENSE file if it doesn't exist
           if (!(Test-Path "nsis/LICENSE")) {
             @"
           Apache License
           Version 2.0, January 2004
           http://www.apache.org/licenses/
-          
-          TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
-          
-          This software is provided 'as-is', without any express or implied warranty.
-          In no event will the authors be held liable for any damages arising from the use of this software.
           "@ | Out-File -FilePath "nsis/LICENSE" -Encoding UTF8
           }
-          
-          # Create a simple NSIS script
+
+          # Create the NSIS script file
           @"
           !define PRODUCT_NAME "Tesseract OCR"
           !define PRODUCT_VERSION "5.5.1"
@@ -198,10 +125,10 @@ jobs:
           !define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\tesseract.exe"
           !define PRODUCT_UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\`${PRODUCT_NAME}"
           !define PRODUCT_UNINST_ROOT_KEY "HKLM"
-          
+
           ; Modern UI
           !include "MUI2.nsh"
-          
+
           ; General
           Name "`${PRODUCT_NAME} `${PRODUCT_VERSION}"
           OutFile "tesseract-ocr-`${PRODUCT_VERSION}-setup.exe"
@@ -210,38 +137,38 @@ jobs:
           ShowInstDetails show
           ShowUnInstDetails show
           SetCompressor lzma
-          
+
           ; Interface Settings
           !define MUI_ABORTWARNING
           !define MUI_ICON "`${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
           !define MUI_UNICON "`${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
-          
+
           ; Pages
           !insertmacro MUI_PAGE_WELCOME
-          !insertmacro MUI_PAGE_LICENSE "LICENSE"
+          !insertmacro MUI_PAGE_LICENSE "nsis/LICENSE"
           !insertmacro MUI_PAGE_DIRECTORY
           !insertmacro MUI_PAGE_INSTFILES
           !insertmacro MUI_PAGE_FINISH
-          
+
           ; Uninstaller pages
           !insertmacro MUI_UNPAGE_INSTFILES
-          
+
           ; Language files
           !insertmacro MUI_LANGUAGE "English"
-          
-          ; Reserve files
-          !insertmacro MUI_RESERVEFILE_INSTALLOPTIONS
-          
+
+          # [DIHAPUS] Baris ini menyebabkan error dan tidak lagi diperlukan.
+          # !insertmacro MUI_RESERVEFILE_INSTALLOPTIONS
+
           Section "MainSection" SEC01
             SetOutPath "`$INSTDIR"
             SetOverwrite ifnewer
-            
+
             ; Copy files
-            File /r /x "*.pdb" "installer\*"
-            
+            File /r /x "*.pdb" "nsis/installer/*"
+
             ; Create uninstaller
             WriteUninstaller "`$INSTDIR\uninst.exe"
-            
+
             ; Registry entries
             WriteRegStr HKLM "`${PRODUCT_DIR_REGKEY}" "" "`$INSTDIR\tesseract.exe"
             WriteRegStr `${PRODUCT_UNINST_ROOT_KEY} "`${PRODUCT_UNINST_KEY}" "DisplayName" "`$(^Name)"
@@ -250,65 +177,29 @@ jobs:
             WriteRegStr `${PRODUCT_UNINST_ROOT_KEY} "`${PRODUCT_UNINST_KEY}" "DisplayVersion" "`${PRODUCT_VERSION}"
             WriteRegStr `${PRODUCT_UNINST_ROOT_KEY} "`${PRODUCT_UNINST_KEY}" "URLInfoAbout" "`${PRODUCT_WEB_SITE}"
             WriteRegStr `${PRODUCT_UNINST_ROOT_KEY} "`${PRODUCT_UNINST_KEY}" "Publisher" "`${PRODUCT_PUBLISHER}"
-            
-            ; Add to PATH
-            EnVar::SetHKLM
-            EnVar::AddValue "PATH" "`$INSTDIR"
+
           SectionEnd
-          
-          Function un.onUninstSuccess
-            HideWindow
-            MessageBox MB_ICONINFORMATION|MB_OK "`$(^Name) was successfully removed from your computer."
-          FunctionEnd
-          
-          Function un.onInit
-            MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON2 "Are you sure you want to completely remove `$(^Name) and all of its components?" IDYES +2
-            Abort
-          FunctionEnd
-          
-          Section Uninstall
-            ; Remove from PATH
-            EnVar::SetHKLM
-            EnVar::DeleteValue "PATH" "`$INSTDIR"
-            
+
+          Section "Uninstall"
             ; Remove files and directories
-            RMDir /r "`$INSTDIR\*.*"
-            RMDir "`$INSTDIR"
-            
+            RMDir /r "`$INSTDIR"
+
             ; Remove registry entries
             DeleteRegKey `${PRODUCT_UNINST_ROOT_KEY} "`${PRODUCT_UNINST_KEY}"
             DeleteRegKey HKLM "`${PRODUCT_DIR_REGKEY}"
-            
+
             SetAutoClose true
           SectionEnd
           "@ | Out-File -FilePath "nsis/tesseract.nsi" -Encoding UTF8
 
-      # Langkah 15: Install NSIS plugins
-      - name: Install NSIS EnVar plugin
-        shell: pwsh
-        run: |
-          # Download and install EnVar plugin for PATH management
-          try {
-            $pluginUrl = "https://nsis.sourceforge.io/mediawiki/images/7/7f/EnVar_plugin.zip"
-            Invoke-WebRequest -Uri $pluginUrl -OutFile "envar.zip" -ErrorAction SilentlyContinue
-            if (Test-Path "envar.zip") {
-              Expand-Archive "envar.zip" -DestinationPath "envar_temp"
-              Copy-Item "envar_temp/Plugins/x86-unicode/EnVar.dll" "C:/Program Files (x86)/NSIS/Plugins/x86-unicode/" -Force -ErrorAction SilentlyContinue
-              Copy-Item "envar_temp/Plugins/x86-ansi/EnVar.dll" "C:/Program Files (x86)/NSIS/Plugins/x86-ansi/" -Force -ErrorAction SilentlyContinue
-              Remove-Item "envar.zip", "envar_temp" -Recurse -Force -ErrorAction SilentlyContinue
-            }
-          } catch {
-            Write-Host "EnVar plugin installation failed, will create simple installer without PATH modification"
-          }
-
-      # Langkah 16: Build NSIS installer
+      # Langkah 12: Build NSIS installer
       - name: Build NSIS installer
         run: |
           cd nsis
           & "C:\Program Files (x86)\NSIS\makensis.exe" tesseract.nsi
         shell: pwsh
 
-      # Langkah 16: Mengunggah Installer sebagai "Artifact"
+      # Langkah 13: Mengunggah Installer sebagai "Artifact"
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
