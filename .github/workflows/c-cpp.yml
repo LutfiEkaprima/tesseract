@@ -174,9 +174,13 @@ jobs:
           $stagingDir = "output/staging"
           New-Item -ItemType Directory -Force -Path $stagingDir
           
-          # Copy build output files directly
-          Write-Host "Copying files from $buildOutput to $stagingDir"
-          Copy-Item -Path "$buildOutput/*" -Destination $stagingDir -Recurse -Force
+          # Copy build output files directly to staging (only files, not directories)
+          Write-Host "Copying executable files from $buildOutput to $stagingDir"
+          $buildFiles = Get-ChildItem -Path $buildOutput -File
+          foreach ($file in $buildFiles) {
+            Copy-Item $file.FullName (Join-Path $stagingDir $file.Name) -Force
+            Write-Host "Copied: $($file.Name)"
+          }
           
           # Copy specific required DLL dependencies
           Write-Host "Copying required DLL dependencies..."
@@ -229,33 +233,14 @@ jobs:
             Write-Warning "vcpkg bin path not found: $vcpkgBinPath"
           }
           
-          # Also copy any additional directories that might be needed
-          $additionalDirs = @("share", "tessdata")
-          foreach ($dir in $additionalDirs) {
-            $sourcePath = Join-Path (Split-Path $buildOutput -Parent) $dir
-            if (Test-Path $sourcePath) {
-              $destPath = Join-Path $stagingDir $dir
-              Copy-Item -Path $sourcePath -Destination $destPath -Recurse -Force
-              Write-Host "Copied $dir directory to staging"
-            }
-          }
+          # Remove the tessdata and share directory copying to avoid subfolders
+          # We'll only copy essential files to keep the ZIP clean
           
-          # Check for tessdata in vcpkg
-          $vcpkgSharePath = "C:/vcpkg/installed/x64-windows/share"
-          if (Test-Path $vcpkgSharePath) {
-            $tessdataPath = Join-Path $vcpkgSharePath "tessdata"
-            if (Test-Path $tessdataPath) {
-              $destTessdata = Join-Path $stagingDir "tessdata"
-              Copy-Item -Path $tessdataPath -Destination $destTessdata -Recurse -Force
-              Write-Host "Copied tessdata from vcpkg share"
-            }
-          }
-          
-          # Copy root level additional files if they exist
+          # Copy root level additional files if they exist (only files)
           $additionalFiles = @("README.md", "LICENSE", "CHANGELOG.md")
           foreach ($file in $additionalFiles) {
             if (Test-Path $file) {
-              Copy-Item $file $stagingDir -Force
+              Copy-Item $file (Join-Path $stagingDir (Split-Path $file -Leaf)) -Force
               Write-Host "Copied $file to staging directory"
             }
           }
@@ -293,52 +278,22 @@ jobs:
             Write-Host "Build will continue, but the executable might not work properly"
           }
           
-          # Show contents of staging directory
-          Write-Host "`nComplete contents of staging directory:"
-          Get-ChildItem -Recurse $stagingDir | Select-Object FullName, Length
+          # Show contents of staging directory (should only be files now)
+          Write-Host "`nFinal contents of staging directory (files only):"
+          Get-ChildItem $stagingDir -File | Select-Object Name, Length
           
-          # Create ZIP file directly from individual files, not from staging directory
+          # Create ZIP file using simple Compress-Archive with wildcard
           $zipName = "tesseract-ocr-windows-x64.zip"
           $zipPath = "output/$zipName"
           
-          # Get all files from staging directory (not the directory itself)
-          $filesToZip = Get-ChildItem -Path $stagingDir -Recurse -File
-          
-          Write-Host "Creating ZIP with $($filesToZip.Count) files..."
-          
-          # Create ZIP using System.IO.Compression
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          
+          # Remove existing ZIP if it exists
           if (Test-Path $zipPath) {
             Remove-Item $zipPath -Force
           }
           
-          $zip = [System.IO.Compression.ZipFile]::Open($zipPath, [System.IO.Compression.ZipArchiveMode]::Create)
-          
-          try {
-            foreach ($file in $filesToZip) {
-              # Get relative path from staging directory
-              $relativePath = $file.FullName.Substring($stagingDir.Length + 1)
-              
-              # Add file to ZIP with proper path
-              $entry = $zip.CreateEntry($relativePath)
-              $entryStream = $entry.Open()
-              $fileStream = [System.IO.File]::OpenRead($file.FullName)
-              
-              try {
-                $fileStream.CopyTo($entryStream)
-              }
-              finally {
-                $fileStream.Close()
-                $entryStream.Close()
-              }
-              
-              Write-Host "Added to ZIP: $relativePath"
-            }
-          }
-          finally {
-            $zip.Dispose()
-          }
+          # Compress only the files (not directories) from staging
+          $filesToCompress = Join-Path $stagingDir "*"
+          Compress-Archive -Path $filesToCompress -DestinationPath $zipPath -CompressionLevel Optimal
           
           Write-Host "Created ZIP file: $zipPath"
           
