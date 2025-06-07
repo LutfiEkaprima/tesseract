@@ -335,7 +335,8 @@ jobs:
                 Write-Host "Downloading basic language files..."
                 $languageFiles = @(
                   @{ name = "eng.traineddata"; url = "https://github.com/tesseract-ocr/tessdata/raw/main/eng.traineddata" },
-                  @{ name = "osd.traineddata"; url = "https://github.com/tesseract-ocr/tessdata/raw/main/osd.traineddata" }
+                  @{ name = "osd.traineddata"; url = "https://github.com/tesseract-ocr/tessdata/raw/main/osd.traineddata" },
+                  @{ name = "ind.traineddata"; url = "https://github.com/tesseract-ocr/tessdata/raw/main/ind.traineddata" },
                 )
                 
                 foreach ($langFile in $languageFiles) {
