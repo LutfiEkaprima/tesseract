@@ -191,6 +191,7 @@ jobs:
             "libpng16.dll",
             "libsharpyuv.dll",
             "libwebp.dll",
+            "libwebpmux.dll",
             "openjp2.dll",
             "tiff.dll",
             "zlib1.dll",
@@ -296,12 +297,48 @@ jobs:
           Write-Host "`nComplete contents of staging directory:"
           Get-ChildItem -Recurse $stagingDir | Select-Object FullName, Length
           
-          # Create ZIP file from staging directory contents (not the directory itself)
+          # Create ZIP file directly from individual files, not from staging directory
           $zipName = "tesseract-ocr-windows-x64.zip"
           $zipPath = "output/$zipName"
           
-          # Compress the contents of staging directory, not the directory itself
-          Compress-Archive -Path "$stagingDir/*" -DestinationPath $zipPath -CompressionLevel Optimal
+          # Get all files from staging directory (not the directory itself)
+          $filesToZip = Get-ChildItem -Path $stagingDir -Recurse -File
+          
+          Write-Host "Creating ZIP with $($filesToZip.Count) files..."
+          
+          # Create ZIP using System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          
+          if (Test-Path $zipPath) {
+            Remove-Item $zipPath -Force
+          }
+          
+          $zip = [System.IO.Compression.ZipFile]::Open($zipPath, [System.IO.Compression.ZipArchiveMode]::Create)
+          
+          try {
+            foreach ($file in $filesToZip) {
+              # Get relative path from staging directory
+              $relativePath = $file.FullName.Substring($stagingDir.Length + 1)
+              
+              # Add file to ZIP with proper path
+              $entry = $zip.CreateEntry($relativePath)
+              $entryStream = $entry.Open()
+              $fileStream = [System.IO.File]::OpenRead($file.FullName)
+              
+              try {
+                $fileStream.CopyTo($entryStream)
+              }
+              finally {
+                $fileStream.Close()
+                $entryStream.Close()
+              }
+              
+              Write-Host "Added to ZIP: $relativePath"
+            }
+          }
+          finally {
+            $zip.Dispose()
+          }
           
           Write-Host "Created ZIP file: $zipPath"
           
