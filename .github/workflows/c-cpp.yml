@@ -61,33 +61,29 @@ jobs:
       - name: Setup Ninja
         uses: seanmiddleditch/gha-setup-ninja@master
 
-      # Langkah 6: Instal Dependensi Menggunakan vcpkg (diperbaiki nama package)
+      # Langkah 7: Instal Dependensi Menggunakan vcpkg (minimal dependencies)
       - name: Install dependencies via vcpkg
         run: |
           vcpkg install leptonica:x64-windows
           vcpkg install libarchive:x64-windows
-          vcpkg install curl:x64-windows
-          vcpkg install icu:x64-windows
-          vcpkg install pkgconf:x64-windows
           echo "Installed packages:"
           vcpkg list
         shell: pwsh
 
-      # Langkah 8: Mengkonfigurasi Proyek dengan CMake
+      # Langkah 8: Mengkonfigurasi Proyek dengan CMake (minimal build)
       - name: Configure CMake
         run: >
           cmake -G "Visual Studio 17 2022" -A x64 -S . -B build
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
-          -DBUILD_TRAINING_TOOLS=ON
+          -DBUILD_TRAINING_TOOLS=OFF
           -DSW_BUILD=OFF
           -DBUILD_SHARED_LIBS=ON
           -DOPENMP_BUILD=OFF
           -DCPPAN_BUILD=OFF
           -DUSE_SYSTEM_ICU=OFF
+          -DDISABLE_CURL=ON
           -DCMAKE_INSTALL_PREFIX=build/install
-        env:
-          PKG_CONFIG_PATH: C:/vcpkg/installed/x64-windows/lib/pkgconfig
 
       # Langkah 9: Mengkompilasi Kode dan Menjalankan Instalasi
       - name: Build
