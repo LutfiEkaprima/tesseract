@@ -39,10 +39,15 @@ jobs:
             p7zip
 
       # Langkah 3: Mengunduh dan Menyiapkan vcpkg Secara Manual
-      - name: Clone and Bootstrap vcpkg
+      - name: Clone and Update vcpkg
         run: |
+          echo "Cloning vcpkg..."
           git clone https://github.com/microsoft/vcpkg.git D:/a/vcpkg
+          echo "Bootstrapping vcpkg..."
           D:/a/vcpkg/bootstrap-vcpkg.bat
+          echo "Updating vcpkg ports registry..."
+          cd D:/a/vcpkg
+          git pull
         shell: cmd
 
       # Langkah 4: Menambahkan vcpkg ke PATH
@@ -50,14 +55,9 @@ jobs:
         run: echo "D:\a\vcpkg" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         shell: pwsh
 
-      # Langkah 5: Memperbarui Registri vcpkg dan Instal Dependensi
-      - name: Update vcpkg registry and Install dependencies
-        run: |
-          echo "Updating vcpkg ports..."
-          vcpkg update --no-dry-run
-          echo "Installing dependencies..."
-          vcpkg install leptonica libarchive libcurl icu --triplet x64-windows
-        shell: cmd
+      # Langkah 5: Instal Dependensi Menggunakan vcpkg
+      - name: Install dependencies via vcpkg
+        run: vcpkg install leptonica libarchive libcurl icu --triplet x64-windows
 
       # Langkah 6: Mengkonfigurasi Proyek dengan CMake
       - name: Configure CMake
